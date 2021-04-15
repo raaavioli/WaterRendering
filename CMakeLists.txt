@@ -23,6 +23,7 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/glew-2.2.0/build/cmake"
 include_directories(
   ${GLFW_INCLUDE_DIRS}
   ${CMAKE_SOURCE_DIR}/glew-2.2.0/include
+  ${CMAKE_SOURCE_DIR}/include
 )
 add_executable(${PROJECT_NAME}
   ${CMAKE_SOURCE_DIR}/src/main.cpp

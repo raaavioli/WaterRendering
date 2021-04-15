@@ -1,4 +1,5 @@
 #include<iostream>
+#include<vector>
 
 #define GL_SILENCE_DEPRECATION
 
@@ -7,7 +8,114 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 /** STRUCTS */
+struct RawModel {
+  RawModel(const std::vector<float>& data, const std::vector<uint32_t>& indices) {
+    assert((indices.size() % 3) == 0);
+
+    glGenVertexArrays(1, &this->renderer_id);
+    glGenBuffers(1, &this->vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, this->vbo);
+    glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), &data[0], GL_STATIC_DRAW);
+    glGenBuffers(1, &this->ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this->ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), &indices[0], GL_STATIC_DRAW);
+    this->index_count = indices.size();
+
+    // Bind buffers to VAO
+    bind();
+    glBindBuffer(GL_ARRAY_BUFFER, this->vbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), 0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void *) (3 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void *) (6 * sizeof(float)));
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this->ebo);
+    unbind();
+  };
+
+  ~RawModel() {
+    // Wish to delete buffers here but may cause problems
+    /*glDeleteBuffers(1, ebo);
+    glDeleteBuffers(1, vbo);
+    glDeleteBuffers(1, renderer_id);*/
+  }
+
+  void bind() {
+    glBindVertexArray(this->renderer_id);
+  }
+
+  void unbind() {
+    glBindVertexArray(0);
+  }
+
+  void draw() {
+    glDrawElements(GL_TRIANGLES, this->index_count, GL_UNSIGNED_INT, 0);
+  }
+
+private:
+  GLuint renderer_id;
+  GLuint vbo;
+  GLuint ebo;
+
+  uint32_t index_count;
+};
+
+struct Texture {
+  Texture() {
+    glGenTextures(1, &this->renderer_id);
+    glBindTexture(GL_TEXTURE_2D, this->renderer_id);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);	
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    char data[] = {(char) 255, (char) 100, (char) 20, (char) 255};
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+  }
+
+  Texture(const char* filename) {
+    glGenTextures(1, &this->renderer_id);
+    glBindTexture(GL_TEXTURE_2D, this->renderer_id);
+    // set the texture wrapping/filtering options (on the currently bound texture object)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);	
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // load and generate the texture
+    int width, height, nrChannels;
+    unsigned char *data = stbi_load(filename, &width, &height, &nrChannels, 0);
+    if (data)
+    {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    else
+    {
+        std::cout << "Error: Failed to load texture: " << filename << std::endl;
+    }
+    stbi_image_free(data);
+  }
+
+  void bind(uint32_t slot) {
+    glActiveTexture(GL_TEXTURE0 + slot);
+    glBindTexture(GL_TEXTURE_2D, this->renderer_id);
+  }
+
+  void unbind() {
+    glBindTexture(GL_TEXTURE_2D, 0);
+  }
+
+private:
+  GLuint renderer_id;
+};
+
 struct Camera {
 	glm::vec3 position;
 	float yaw, pitch;
@@ -33,7 +141,7 @@ struct Camera {
 
 struct Clock {
 public:
-	Clock() : current_tick(glfwGetTime ()), last_tick(current_tick) {}
+	Clock() : current_tick(glfwGetTime ()), last_tick(current_tick), start_tick(current_tick) {}
 
 	// Returns the time in seconds since last call to `tick`.
 	float tick () {
@@ -43,9 +151,14 @@ public:
 		return this->current_tick - this->last_tick;
 	}
 
+  float since_start () {
+    return glfwGetTime() - start_tick;
+  }
+
 private:
 	double current_tick;
 	double last_tick;
+  const double start_tick;
 };
 
 struct Window {
@@ -112,15 +225,28 @@ private:
 void update(const Window& window, double dt, Camera& camera);
 GLuint create_shader_program();
 GLuint create_model_vao(float* data, size_t data_size, uint32_t* indices, size_t indices_size);
+RawModel create_cube();
 
 const char* vertex_shader_code = R"(
 #version 410 core
 layout(location = 0) in vec3 a_Pos;
+layout(location = 1) in vec3 a_Color;
+layout(location = 2) in vec2 a_UV;
+
+layout(location = 0) out vec3 vs_Color;
+layout(location = 1) out vec2 vs_UV;
+layout(location = 2) out float vs_Time;
 
 uniform mat4 u_ViewProjection;
+uniform mat4 u_Model;
+uniform float u_Time;
+
 void main()
 {
-    gl_Position = u_ViewProjection * vec4(a_Pos, 1.0); 
+  vs_Time = u_Time;
+  vs_Color = a_Color;
+  vs_UV = a_UV;
+  gl_Position = u_ViewProjection * u_Model * vec4(a_Pos, 1.0); 
 }
 )";
 
@@ -128,9 +254,26 @@ const char* fragment_shader_code = R"(
 #version 410 core
 out vec4 color;
 
+layout(location = 0) in vec3 vs_Color;
+layout(location = 1) in vec2 vs_UV;
+layout(location = 2) in float vs_Time;
+
+uniform sampler2D texture0;
+uniform sampler2D texture1;
+
+vec3 unwrap_normal(vec3 pixel) {
+  return (pixel / 256.0f);
+}
+
 void main()
 {
-    color = vec4(1.0, 0.0, 0.0, 1.0);
+  float swing = sin(vs_Time) / 100.0f;
+  vec3 tex0 = texture(texture0, vec2(vs_UV.x + vs_Time / 30.0f, vs_UV.y + vs_Time / 50.0f + swing)).xyz;
+  vec3 tex1 = texture(texture1, vec2(vs_UV.x + vs_Time / 27.0f, vs_UV.y - vs_Time / 40.0f)).xyz;
+
+  vec3 blended = normalize((unwrap_normal(tex0) + unwrap_normal(tex1)) / 2.0f);
+  float shade = clamp(1 - pow(dot(blended, vec3(0.0, 0.0, 1.0)), 0.8), 0.22, 0.75);
+  color = vec4(vs_Color * shade, 1.0);
 }
 )";
 
@@ -142,50 +285,80 @@ int main(void)
   GLuint shader_program = create_shader_program();
   glUseProgram(shader_program);
 
-  float cube_data[] = {
-    -0.5f, -0.5f, -0.5f, // 0
-    0.5f, -0.5f, -0.5f, // 1
-    -0.5f, 0.5f, -0.5f, // 2
-    0.5f, 0.5f, -0.5f, // 3
-    -0.5f, -0.5f, 0.5f, // 4
-    0.5f, -0.5f, 0.5f, // 5
-    -0.5f, 0.5f, 0.5f, // 6
-    0.5f, 0.5f, 0.5f, // 7
+  RawModel cube = create_cube();
+
+  std::vector<float> square_data = {
+    -0.5, 0.0, -0.5, 0.4, 0.4, 0.95, 1.0, 1.0, 
+    -0.5, 0.0, 0.5, 0.4, 0.4, 0.95, 1.0, 0.0,  
+    0.5, 0.0, 0.5, 0.4, 0.4, 0.95, 0.0, 0.0,
+    0.5, 0.0, -0.5, 0.4, 0.4, 0.95, 0.0, 1.0,
+
   };
 
-  uint32_t cube_indices[] = {
-    1, 0, 3, // Back
-    3, 0, 2, 
-    2, 0, 4, // Left
-    4, 6, 2,
-    4, 5, 7, // Front
-    7, 6, 4,
-    3, 7, 5, // Right
-    5, 1, 3,
-    2, 6, 7, // Top
-    7, 3, 2,
-    4, 0, 1, // Bottom
-    1, 5, 4,
+  std::vector<uint32_t> square_indices = {
+    0, 1, 3, 
+    3, 1, 2
   };
-  GLuint cube_vao = create_model_vao(cube_data, sizeof(cube_data), cube_indices, sizeof(cube_indices));
 
-  Camera camera = { .position = glm::vec3(0.0, 2.0, 5.0),
+  RawModel water(square_data, square_indices);
+  Texture water_texture("../water_image.jpg");
+  Texture water_normal1("../NormalMap.png");
+  Texture water_normal2("../NormalMap-2.png");
+  Texture invis_texture;
+  Camera camera = { .position = glm::vec3(0.0, 4.0, 5.0),
 	  .yaw = 0.0, .pitch = -20.0,
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
   };
 
+  glEnable(GL_CULL_FACE);
+  glCullFace(GL_BACK);
+  glFrontFace(GL_CCW); 
+
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LESS); 
+
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  GLuint view_proj_loc = glGetUniformLocation(shader_program, "u_ViewProjection");
+  GLuint model_loc = glGetUniformLocation(shader_program, "u_Model");
+  GLuint time_loc = glGetUniformLocation(shader_program, "u_Time");
+  GLuint tex0_loc = glGetUniformLocation(shader_program, "texture0");
+  GLuint tex1_loc  = glGetUniformLocation(shader_program, "texture1");
+
+  glUniform1i(tex0_loc, 0);
+  glUniform1i(tex1_loc, 1);
+
   while (!window.should_close ())
   {
-    glClear(GL_COLOR_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
     glClearColor(0.8, 0.85, 1.0, 1.0);
+    glUseProgram(shader_program);
 
     update(window, clock.tick(), camera);
-    
-    glBindVertexArray(cube_vao);
+
     glm::mat4 view_projection = camera.get_view_projection();
-    GLuint view_proj_loc = glGetUniformLocation(shader_program, "u_ViewProjection");
     glUniformMatrix4fv(view_proj_loc, 1, false, &view_projection[0][0]);
-    glDrawElements(GL_TRIANGLES, sizeof(cube_indices) / 3.0f, GL_UNSIGNED_INT, 0);
+
+    glUniform1f(time_loc, clock.since_start());
+
+    cube.bind();
+    invis_texture.bind(0);
+    glm::mat4 cube_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(2.0, 0.0, 0.0));
+    cube_matrix = glm::rotate(cube_matrix, glm::radians<float>(45.0f), glm::vec3(0.0, 0.0, 1.0));
+    glUniformMatrix4fv(model_loc, 1, false, &cube_matrix[0][0]);
+    cube.draw();
+
+    water.bind();
+    water_normal1.bind(0);
+    water_normal2.bind(1);
+    for (int x = 0; x < 10; x++) {
+      for (int z = 0; z < 10; z++) {
+        glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(-5.0 + x, 0.0, -7.0 + z));
+        glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
+        water.draw();
+      }
+    }
 
     window.swap_buffers ();
     window.poll_events ();
@@ -261,26 +434,33 @@ GLuint create_shader_program() {
   return program;
 };
 
-GLuint create_model_vao(float* data, size_t data_size, uint32_t* indices, size_t indices_size) {
-  GLuint vao;
-  glGenVertexArrays(1, &vao);
+RawModel create_cube() {
+   std::vector<float> cube_data = {
+    // x, y, z, r, g, b, u, v
+    -0.5f, -0.5f, -0.5f, 0.0, 1.0, 0.0, 0.0, 0.0,
+    0.5f, -0.5f, -0.5f, 0.0, 1.0, 0.0, 0.0, 0.0,
+    -0.5f, 0.5f, -0.5f, 0.0, 1.0, 0.0, 0.0, 0.0,
+    0.5f, 0.5f, -0.5f, 0.0, 1.0, 0.0, 0.0, 0.0,
+    -0.5f, -0.5f, 0.5f, 1.0, 0.0, 0.0, 0.0, 0.0,
+    0.5f, -0.5f, 0.5f, 1.0, 0.0, 0.0, 0.0, 0.0,
+    -0.5f, 0.5f, 0.5f, 1.0, 0.0, 0.0, 0.0, 0.0,
+    0.5f, 0.5f, 0.5f, 1.0, 0.0, 0.0, 0.0, 0.0,
+  };
 
-  GLuint vbo;
-  glGenBuffers(1, &vbo);
-  glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferData(GL_ARRAY_BUFFER, data_size, data, GL_STATIC_DRAW);
+  std::vector<uint32_t> cube_indices = {
+    1, 0, 3, // Back
+    3, 0, 2, 
+    2, 0, 4, // Left
+    4, 6, 2,
+    4, 5, 7, // Front
+    7, 6, 4,
+    3, 7, 5, // Right
+    5, 1, 3,
+    2, 6, 7, // Top
+    7, 3, 2,
+    4, 0, 1, // Bottom
+    1, 5, 4,
+  };
 
-  GLuint ebo;
-  glGenBuffers(1, &ebo);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices_size, indices, GL_STATIC_DRAW);
-
-  glBindVertexArray(vao);
-  
-  glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-
-  return vao;
+  return RawModel(cube_data, cube_indices);
 }
