@@ -8,6 +8,9 @@
 #include <cuda.h>
 #include <cufft.h>
 
+#define CUDA_ASSERT(err) if(err != cudaSuccess) std::cout << "Cuda Error: " << err << std::endl;
+#define CUFFT_ASSERT(err) if(err != CUFFT_SUCCESS) std::cout << "Cufft Error: " << err << std::endl;
+
 // GL
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -231,8 +234,6 @@ GLuint create_shader_program();
 GLuint create_model_vao(float* data, size_t data_size, uint32_t* indices, size_t indices_size);
 RawModel create_cube();
 
-static const char *_cudaGetErrorEnum(cufftResult error);
-
 const char* vertex_shader_code = R"(
 #version 410 core
 layout(location = 0) in vec3 a_Pos;
@@ -352,22 +353,14 @@ int main(void)
     }
   }
 
-  std::cout << "Initializing CUDA context" << std::endl;
-  cudaSetDevice(0);
-  cudaFree(0);
-
   std::complex<double>* h_tk = new std::complex<double>[N * N]; // h_tilde(k, x, t)
   std::complex<double>* h_k = new std::complex<double>[N * N]; // h(k, x, t)
 
   cufftDoubleComplex* h_tk_device;
   cufftDoubleComplex* h_k_device;
-  cudaError err = cudaMalloc ((void**) &h_tk_device, sizeof(std::complex<double>) * N * N);
-  if (err != cudaSuccess)
-    std::cout << "Error cudaMalloc" << err << std::endl;
-  err = cudaMalloc ((void**) &h_k_device, sizeof(std::complex<double>) * N * N);
-  if (err != cudaSuccess)
-    std::cout << "Error cudaMalloc" << err << std::endl;
-  std::cout << "Done allocating device buffers" << std::endl;
+
+  CUDA_ASSERT(cudaMalloc ((void**) &h_tk_device, sizeof(std::complex<double>) * N * N));
+  CUDA_ASSERT(cudaMalloc ((void**) &h_k_device, sizeof(std::complex<double>) * N * N));
 
   // Setup h_tk + device
   for (int m = 0; m < N; m++) {
@@ -379,29 +372,22 @@ int main(void)
       h_tk[i] = h_tilde(h0_tk[i], h0_tmk[i], K, clock.since_start());
     }
   }
-  err = cudaMemcpy(h_tk_device, h_tk, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice);
-  if (err != cudaSuccess)
-    std::cout << "Error cudaMemcpy" << err << std::endl;
-  std::cout << "Done copying h_tk to device" << std::endl;
+  CUDA_ASSERT(cudaMemcpy(h_tk_device, h_tk, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
 
   cufftHandle plan;
-  cufftResult cufft_err = cufftPlan2d(&plan, N, N, CUFFT_Z2Z);
-  std::cout << _cudaGetErrorEnum(cufft_err) << std::endl;
-  cufft_err = cufftExecZ2Z(plan, h_tk_device, h_k_device, CUFFT_INVERSE); // Inverse FFT: h(k, x, t) = sum(h_tilde(k, x, t) * e^(2pikn / N))
-  std::cout << _cudaGetErrorEnum(cufft_err) << std::endl;
-  std::cout << "Done executing FFT" << std::endl;
+  CUFFT_ASSERT(cufftPlan2d(&plan, N, N, CUFFT_Z2Z));
+  CUFFT_ASSERT(cufftExecZ2Z(plan, h_tk_device, h_k_device, CUFFT_INVERSE)); // Inverse FFT: h(k, x, t) = sum(h_tilde(k, x, t) * e^(2pikn / N))
 
-  err = cudaMemcpy(h_k, h_k_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost);
-  if (err != cudaSuccess)
-    std::cout << "Error cudaMalloc" << err << std::endl;
+  CUDA_ASSERT(cudaMemcpy(h_k, h_k_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
+
   for (int m = 0; m < N; m++) {
     for (int n = 0; n < N; n++) {
       int i = m * N + n;
-      std::cout << h_k[i] << std::endl;
+      h_k[i] /= (N * N);
     }
   }
 
-  std::cout << "After copy" << std::endl;
+  std::cout << h_k[N * N - 1] << std::endl; 
   // End wave simulation
 
   while (!window.should_close ())
@@ -539,31 +525,4 @@ RawModel create_cube() {
   };
 
   return RawModel(cube_data, cube_indices);
-}
-
-static const char *_cudaGetErrorEnum(cufftResult error)
-{
-  switch (error)
-  {
-    case CUFFT_SUCCESS:
-      return "CUFFT_SUCCESS";    
-    case CUFFT_INVALID_PLAN:
-      return "CUFFT_INVALID_PLAN";    
-    case CUFFT_ALLOC_FAILED:
-      return "CUFFT_ALLOC_FAILED";    
-    case CUFFT_INVALID_TYPE:
-      return "CUFFT_INVALID_TYPE";    
-    case CUFFT_INVALID_VALUE:
-      return "CUFFT_INVALID_VALUE";    
-    case CUFFT_INTERNAL_ERROR:
-      return "CUFFT_INTERNAL_ERROR";    
-    case CUFFT_EXEC_FAILED:
-      return "CUFFT_EXEC_FAILED";    
-    case CUFFT_SETUP_FAILED:
-      return "CUFFT_SETUP_FAILED";    
-    case CUFFT_INVALID_SIZE:
-      return "CUFFT_INVALID_SIZE";    
-    case CUFFT_UNALIGNED_DATA:
-      return "CUFFT_UNALIGNED_DATA";
-}return "<unknown>";
 }
