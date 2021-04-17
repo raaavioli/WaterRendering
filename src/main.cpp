@@ -3,13 +3,22 @@
 
 #define GL_SILENCE_DEPRECATION
 
-#include <GL/glew.h>
+// CUDA
+#include <cuda_runtime_api.h>
+#include <cuda.h>
+#include <cufft.h>
+
+// GL
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+// Local
+#include "wave_utils.h"
 
 /** STRUCTS */
 struct RawModel {
@@ -33,7 +42,7 @@ struct RawModel {
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void *) (3 * sizeof(float)));
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void *) (6 * sizeof(float)));
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void *) (6 * sizeof(float)));
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this->ebo);
     unbind();
   };
@@ -75,7 +84,7 @@ struct Texture {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    char data[] = {(char) 255, (char) 100, (char) 20, (char) 255};
+    char data[] = {(char) 255, (char) 255, (char) 255, (char) 255};
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
     glGenerateMipmap(GL_TEXTURE_2D);
   }
@@ -168,13 +177,12 @@ public:
       std::cout << "Error: Could not initialize glfw" << std::endl;
       exit(EXIT_FAILURE);
     }
-  
+
     glfwWindowHint(GLFW_SAMPLES, 4); // 4x antialiasing
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); // We want OpenGL 3.3
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // To make MacOS happy; should not be needed
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); // We don't want the old OpenGL 
-
 
     window = glfwCreateWindow(1260, 1080, "Water rendering", NULL, NULL);
     if (!window) {
@@ -184,15 +192,11 @@ public:
     }
     glfwMakeContextCurrent(window);
 
-    // Necessary glew initialization done here, because why not?
-    glewExperimental = GL_TRUE; 
-    GLenum err = glewInit();
-    if (GLEW_OK != err) {
+    if (!gladLoadGLLoader((GLADloadproc) glfwGetProcAddress)) {
       /* Problem: glewInit failed, something is seriously wrong. */
-      fprintf(stderr, "Error: %s\n", glewGetErrorString(err));
+      std::cerr << "Error: failed to initialize OpenGL context \n" << std::endl;
     }
-  
-    std::cout << "Status: Using GLEW " << glewGetString(GLEW_VERSION) << std::endl;
+
     std::cout << "Using GL version: " << glGetString(GL_VERSION) << std::endl;
     std::cout << "Shading language version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl; 
   }
@@ -226,6 +230,8 @@ void update(const Window& window, double dt, Camera& camera);
 GLuint create_shader_program();
 GLuint create_model_vao(float* data, size_t data_size, uint32_t* indices, size_t indices_size);
 RawModel create_cube();
+
+static const char *_cudaGetErrorEnum(cufftResult error);
 
 const char* vertex_shader_code = R"(
 #version 410 core
@@ -267,7 +273,7 @@ vec3 unwrap_normal(vec3 pixel) {
 
 void main()
 {
-  float swing = sin(vs_Time) / 100.0f;
+  float swing = sin(vs_Time) / 50.0f;
   vec3 tex0 = texture(texture0, vec2(vs_UV.x + vs_Time / 30.0f, vs_UV.y + vs_Time / 50.0f + swing)).xyz;
   vec3 tex1 = texture(texture1, vec2(vs_UV.x + vs_Time / 27.0f, vs_UV.y - vs_Time / 40.0f)).xyz;
 
@@ -288,31 +294,29 @@ int main(void)
   RawModel cube = create_cube();
 
   std::vector<float> square_data = {
-    -0.5, 0.0, -0.5, 0.4, 0.4, 0.95, 1.0, 1.0, 
-    -0.5, 0.0, 0.5, 0.4, 0.4, 0.95, 1.0, 0.0,  
-    0.5, 0.0, 0.5, 0.4, 0.4, 0.95, 0.0, 0.0,
-    0.5, 0.0, -0.5, 0.4, 0.4, 0.95, 0.0, 1.0,
+    -0.5, 0.0, -0.5, 0.6, 0.6, 0.9, 1.0, 1.0, 
+    -0.5, 0.0, 0.5, 0.6, 0.6, 0.9, 1.0, 0.0,  
+    0.5, 0.0, 0.5, 0.6, 0.6, 0.9, 0.0, 0.0,
+    0.5, 0.0, -0.5, 0.6, 0.6, 0.9, 0.0, 1.0,
 
   };
 
   std::vector<uint32_t> square_indices = {
-    0, 1, 3, 
-    3, 1, 2
+    3, 0, 1, 
+    1, 2, 3
   };
 
   RawModel water(square_data, square_indices);
-  Texture water_texture("../water_image.jpg");
+  //Texture water_texture("../water_image.jpg");
   Texture water_normal1("../NormalMap.png");
   Texture water_normal2("../NormalMap-2.png");
-  Texture invis_texture;
+  Texture white_texture;
   Camera camera = { .position = glm::vec3(0.0, 4.0, 5.0),
 	  .yaw = 0.0, .pitch = -20.0,
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
   };
 
   glEnable(GL_CULL_FACE);
-  glCullFace(GL_BACK);
-  glFrontFace(GL_CCW); 
 
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LESS); 
@@ -329,6 +333,77 @@ int main(void)
   glUniform1i(tex0_loc, 0);
   glUniform1i(tex1_loc, 1);
 
+  // Wave simulation
+  const int N = 512;
+  double length = 1000;
+  double two_pi = glm::two_pi<double>();
+
+  std::complex<double>* h0_tk = new std::complex<double>[N * N]; // h0_tilde(k)
+  std::complex<double>* h0_tmk = new std::complex<double>[N * N]; // h0_tilde(-k)
+
+  for (int m = 0; m < N; m++) {
+    for (int n = 0; n < N; n++) {
+      int i = m * N + n;
+      float kx = (n - N / 2.f) * two_pi / length;
+      float kz = (m - N / 2.f) * two_pi / length;
+      glm::vec2 k(kx, kz);
+      h0_tk[i] = h0_tilde(k);
+      h0_tmk[i] = h0_tilde(-k);
+    }
+  }
+
+  std::cout << "Initializing CUDA context" << std::endl;
+  cudaSetDevice(0);
+  cudaFree(0);
+
+  std::complex<double>* h_tk = new std::complex<double>[N * N]; // h_tilde(k, x, t)
+  std::complex<double>* h_k = new std::complex<double>[N * N]; // h(k, x, t)
+
+  cufftDoubleComplex* h_tk_device;
+  cufftDoubleComplex* h_k_device;
+  cudaError err = cudaMalloc ((void**) &h_tk_device, sizeof(std::complex<double>) * N * N);
+  if (err != cudaSuccess)
+    std::cout << "Error cudaMalloc" << err << std::endl;
+  err = cudaMalloc ((void**) &h_k_device, sizeof(std::complex<double>) * N * N);
+  if (err != cudaSuccess)
+    std::cout << "Error cudaMalloc" << err << std::endl;
+  std::cout << "Done allocating device buffers" << std::endl;
+
+  // Setup h_tk + device
+  for (int m = 0; m < N; m++) {
+    for (int n = 0; n < N; n++) {
+      int i = m * N + n;
+      float kx = (n - N / 2.f) * two_pi / length;
+      float kz = (m - N / 2.f) * two_pi / length;
+      glm::vec2 K(kx, kz);
+      h_tk[i] = h_tilde(h0_tk[i], h0_tmk[i], K, clock.since_start());
+    }
+  }
+  err = cudaMemcpy(h_tk_device, h_tk, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice);
+  if (err != cudaSuccess)
+    std::cout << "Error cudaMemcpy" << err << std::endl;
+  std::cout << "Done copying h_tk to device" << std::endl;
+
+  cufftHandle plan;
+  cufftResult cufft_err = cufftPlan2d(&plan, N, N, CUFFT_Z2Z);
+  std::cout << _cudaGetErrorEnum(cufft_err) << std::endl;
+  cufft_err = cufftExecZ2Z(plan, h_tk_device, h_k_device, CUFFT_INVERSE); // Inverse FFT: h(k, x, t) = sum(h_tilde(k, x, t) * e^(2pikn / N))
+  std::cout << _cudaGetErrorEnum(cufft_err) << std::endl;
+  std::cout << "Done executing FFT" << std::endl;
+
+  err = cudaMemcpy(h_k, h_k_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost);
+  if (err != cudaSuccess)
+    std::cout << "Error cudaMalloc" << err << std::endl;
+  for (int m = 0; m < N; m++) {
+    for (int n = 0; n < N; n++) {
+      int i = m * N + n;
+      std::cout << h_k[i] << std::endl;
+    }
+  }
+
+  std::cout << "After copy" << std::endl;
+  // End wave simulation
+
   while (!window.should_close ())
   {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
@@ -343,7 +418,7 @@ int main(void)
     glUniform1f(time_loc, clock.since_start());
 
     cube.bind();
-    invis_texture.bind(0);
+    white_texture.bind(0);
     glm::mat4 cube_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(2.0, 0.0, 0.0));
     cube_matrix = glm::rotate(cube_matrix, glm::radians<float>(45.0f), glm::vec3(0.0, 0.0, 1.0));
     glUniformMatrix4fv(model_loc, 1, false, &cube_matrix[0][0]);
@@ -355,6 +430,7 @@ int main(void)
     for (int x = 0; x < 10; x++) {
       for (int z = 0; z < 10; z++) {
         glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(-5.0 + x, 0.0, -7.0 + z));
+        //water_matrix = glm::rotate(water_matrix, glm::radians<float>(0.f), glm::vec3(1.f, 0.f, 0.f));
         glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
         water.draw();
       }
@@ -463,4 +539,31 @@ RawModel create_cube() {
   };
 
   return RawModel(cube_data, cube_indices);
+}
+
+static const char *_cudaGetErrorEnum(cufftResult error)
+{
+  switch (error)
+  {
+    case CUFFT_SUCCESS:
+      return "CUFFT_SUCCESS";    
+    case CUFFT_INVALID_PLAN:
+      return "CUFFT_INVALID_PLAN";    
+    case CUFFT_ALLOC_FAILED:
+      return "CUFFT_ALLOC_FAILED";    
+    case CUFFT_INVALID_TYPE:
+      return "CUFFT_INVALID_TYPE";    
+    case CUFFT_INVALID_VALUE:
+      return "CUFFT_INVALID_VALUE";    
+    case CUFFT_INTERNAL_ERROR:
+      return "CUFFT_INTERNAL_ERROR";    
+    case CUFFT_EXEC_FAILED:
+      return "CUFFT_EXEC_FAILED";    
+    case CUFFT_SETUP_FAILED:
+      return "CUFFT_SETUP_FAILED";    
+    case CUFFT_INVALID_SIZE:
+      return "CUFFT_INVALID_SIZE";    
+    case CUFFT_UNALIGNED_DATA:
+      return "CUFFT_UNALIGNED_DATA";
+}return "<unknown>";
 }

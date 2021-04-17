@@ -10,3 +10,6 @@
 [submodule "build/glew"]
 	path = build/glew
 	url = https://github.com/nigels-com/glew
+[submodule "glad"]
+	path = glad
+	url = https://github.com/Dav1dde/glad
