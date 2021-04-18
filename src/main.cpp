@@ -17,11 +17,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-
 // Local
 #include "wave_utils.h"
+#include "texture.h"
 
 /** STRUCTS */
 struct RawModel {
@@ -77,56 +75,7 @@ private:
   uint32_t index_count;
 };
 
-struct Texture {
-  Texture() {
-    glGenTextures(1, &this->renderer_id);
-    glBindTexture(GL_TEXTURE_2D, this->renderer_id);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);	
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    char data[] = {(char) 255, (char) 255, (char) 255, (char) 255};
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-    glGenerateMipmap(GL_TEXTURE_2D);
-  }
-
-  Texture(const char* filename) {
-    glGenTextures(1, &this->renderer_id);
-    glBindTexture(GL_TEXTURE_2D, this->renderer_id);
-    // set the texture wrapping/filtering options (on the currently bound texture object)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);	
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    // load and generate the texture
-    int width, height, nrChannels;
-    unsigned char *data = stbi_load(filename, &width, &height, &nrChannels, 0);
-    if (data)
-    {
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-        glGenerateMipmap(GL_TEXTURE_2D);
-    }
-    else
-    {
-        std::cout << "Error: Failed to load texture: " << filename << std::endl;
-    }
-    stbi_image_free(data);
-  }
-
-  void bind(uint32_t slot) {
-    glActiveTexture(GL_TEXTURE0 + slot);
-    glBindTexture(GL_TEXTURE_2D, this->renderer_id);
-  }
-
-  void unbind() {
-    glBindTexture(GL_TEXTURE_2D, 0);
-  }
-
-private:
-  GLuint renderer_id;
-};
 
 struct Camera {
 	glm::vec3 position;
@@ -278,9 +227,9 @@ void main()
   vec3 tex0 = texture(texture0, vec2(vs_UV.x + vs_Time / 30.0f, vs_UV.y + vs_Time / 50.0f + swing)).xyz;
   vec3 tex1 = texture(texture1, vec2(vs_UV.x + vs_Time / 27.0f, vs_UV.y - vs_Time / 40.0f)).xyz;
 
-  vec3 blended = normalize((unwrap_normal(tex0) + unwrap_normal(tex1)) / 2.0f);
-  float shade = clamp(1 - pow(dot(blended, vec3(0.0, 0.0, 1.0)), 0.8), 0.22, 0.75);
-  color = vec4(vs_Color * shade, 1.0);
+  //vec3 blended = normalize((unwrap_normal(tex0) + unwrap_normal(tex1)) / 2.0f);
+  //float shade = clamp(1 - pow(dot(blended, vec3(0.0, 0.0, 1.0)), 0.8), 0.22, 0.75);
+  color = texture(texture0, vs_UV); //vec4(vs_Color * shade, 1.0);
 }
 )";
 
@@ -312,8 +261,8 @@ int main(void)
   Texture water_normal1("../NormalMap.png");
   Texture water_normal2("../NormalMap-2.png");
   Texture white_texture;
-  Camera camera = { .position = glm::vec3(0.0, 4.0, 5.0),
-	  .yaw = 0.0, .pitch = -20.0,
+  Camera camera = { .position = glm::vec3(0.0, 0.0, 1.0),
+	  .yaw = 0.0, .pitch = 0.0,
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
   };
 
@@ -335,8 +284,8 @@ int main(void)
   glUniform1i(tex1_loc, 1);
 
   // Wave simulation
-  const int N = 512;
-  double length = 1000;
+  const int N = 128;
+  double length = 128;
   double two_pi = glm::two_pi<double>();
 
   std::complex<double>* h0_tk = new std::complex<double>[N * N]; // h0_tilde(k)
@@ -380,14 +329,32 @@ int main(void)
 
   CUDA_ASSERT(cudaMemcpy(h_k, h_k_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
 
+  double min_r = std::numeric_limits<double>::max();
+  double max_r = std::numeric_limits<double>::min();
   for (int m = 0; m < N; m++) {
     for (int n = 0; n < N; n++) {
       int i = m * N + n;
-      h_k[i] /= (N * N);
+      int sign = (m + n) % 2 == 0 ? 1 : -1; // Larsson (2012), Equation 4.6
+      h_k[i] /= sign * (N * N);
+
+      if (h_k[i].real() < min_r)
+        min_r = h_k[i].real();
+      if (h_k[i].real() > max_r)
+        max_r = h_k[i].real();
     }
   }
 
-  std::cout << h_k[N * N - 1] << std::endl; 
+  Image displacement_image(N, N, GL_RGB);
+  for (int m = 0; m < N; m++) {
+    for (int n = 0; n < N; n++) {
+      int i = m * N + n;
+      double value = h_k[i].real() - min_r / (max_r - min_r);
+      GLubyte color = value * 255;
+      displacement_image.set_pixel(n, m, color, color, color);
+    }
+  }  
+
+  Texture displacement_tex(displacement_image);
   // End wave simulation
 
   while (!window.should_close ())
@@ -411,16 +378,19 @@ int main(void)
     cube.draw();
 
     water.bind();
-    water_normal1.bind(0);
+    displacement_tex.bind(0);
+    /*water_normal1.bind(0);
     water_normal2.bind(1);
     for (int x = 0; x < 10; x++) {
-      for (int z = 0; z < 10; z++) {
-        glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(-5.0 + x, 0.0, -7.0 + z));
-        //water_matrix = glm::rotate(water_matrix, glm::radians<float>(0.f), glm::vec3(1.f, 0.f, 0.f));
+      for (int z = 0; z < 10; z++) {*/
+        //glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(-5.0 + x, 0.0, -7.0 + z));
+        glm::mat4 water_matrix = glm::identity<glm::mat4>();
+        water_matrix = glm::rotate(water_matrix, glm::radians<float>(90.f), glm::vec3(1.f, 0.f, 0.f));
         glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
         water.draw();
-      }
-    }
+      /*}
+    }*/
+    
 
     window.swap_buffers ();
     window.poll_events ();
