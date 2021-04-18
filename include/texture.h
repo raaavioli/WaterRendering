@@ -1,6 +1,8 @@
 #ifndef WR_TEXTURE_H
 #define WR_TEXTURE_H
 
+#include <iostream>
+
 #include <glad/glad.h>
 
 /** TODO: Make more generic, do not assume byte-sized data for image */

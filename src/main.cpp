@@ -20,16 +20,25 @@
 // Local
 #include "wave_utils.h"
 #include "texture.h"
+#include "framebuffer.h"
+
+struct Vertex {
+  float position[3];
+  float color[3];
+  float normal[3];
+  float uv[2];
+};
 
 /** STRUCTS */
 struct RawModel {
-  RawModel(const std::vector<float>& data, const std::vector<uint32_t>& indices) {
+  RawModel(const std::vector<Vertex>& data, const std::vector<uint32_t>& indices, GLenum usage) {
     assert((indices.size() % 3) == 0);
+    int vertex_size = sizeof(Vertex);
 
     glGenVertexArrays(1, &this->renderer_id);
     glGenBuffers(1, &this->vbo);
     glBindBuffer(GL_ARRAY_BUFFER, this->vbo);
-    glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), &data[0], GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, data.size() * vertex_size, &data[0], usage);
     glGenBuffers(1, &this->ebo);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this->ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), &indices[0], GL_STATIC_DRAW);
@@ -38,12 +47,14 @@ struct RawModel {
     // Bind buffers to VAO
     bind();
     glBindBuffer(GL_ARRAY_BUFFER, this->vbo);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), 0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void *) (3 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (const void *) (6 * sizeof(float)));
+    glEnableVertexAttribArray(0); // Position
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, vertex_size, (const void*) offsetof(Vertex, position));
+    glEnableVertexAttribArray(1); // Color
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, vertex_size, (const void*) offsetof(Vertex, color));
+    glEnableVertexAttribArray(2); // Normal
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, vertex_size, (const void*) offsetof(Vertex, normal));
+    glEnableVertexAttribArray(3); // UV
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, vertex_size, (const void*) offsetof(Vertex, uv));
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this->ebo);
     unbind();
   };
@@ -179,15 +190,41 @@ private:
 
 /** FUNCTIONS */
 void update(const Window& window, double dt, Camera& camera);
-GLuint create_shader_program();
+GLuint create_shader_program(const char* vs_code, const char* fs_code);
 GLuint create_model_vao(float* data, size_t data_size, uint32_t* indices, size_t indices_size);
-RawModel create_cube();
+RawModel create_water_surface(const std::complex<double>* displacement, uint32_t N, uint32_t L);
+
+const char* texture_vs_code = R"(
+#version 410 core
+layout(location = 0) in vec2 a_Pos;
+layout(location = 1) in vec2 a_TextureData;
+
+layout(location = 0) out vec2 vs_UV;
+
+void main() {
+  gl_Position = vec4(a_Pos, 0.0, 1.0); 
+}
+)";
+
+const char* texture_fs_code = R"(
+#version 410 core
+out vec4 color;
+
+layout(location = 0) in vec2 vs_UV;
+
+uniform sampler2D texture0;
+
+void main() {
+  color = texture(texture0, vs_UV);
+}
+)";
 
 const char* vertex_shader_code = R"(
 #version 410 core
 layout(location = 0) in vec3 a_Pos;
 layout(location = 1) in vec3 a_Color;
-layout(location = 2) in vec2 a_UV;
+layout(location = 2) in vec3 a_Normal;
+layout(location = 3) in vec2 a_UV;
 
 layout(location = 0) out vec3 vs_Color;
 layout(location = 1) out vec2 vs_UV;
@@ -215,7 +252,7 @@ layout(location = 1) in vec2 vs_UV;
 layout(location = 2) in float vs_Time;
 
 uniform sampler2D texture0;
-uniform sampler2D texture1;
+//uniform sampler2D texture1;
 
 vec3 unwrap_normal(vec3 pixel) {
   return (pixel / 256.0f);
@@ -223,13 +260,13 @@ vec3 unwrap_normal(vec3 pixel) {
 
 void main()
 {
-  float swing = sin(vs_Time) / 50.0f;
-  vec3 tex0 = texture(texture0, vec2(vs_UV.x + vs_Time / 30.0f, vs_UV.y + vs_Time / 50.0f + swing)).xyz;
-  vec3 tex1 = texture(texture1, vec2(vs_UV.x + vs_Time / 27.0f, vs_UV.y - vs_Time / 40.0f)).xyz;
+  //float swing = sin(vs_Time) / 50.0f;
+  //vec3 tex0 = texture(texture0, vec2(vs_UV.x + vs_Time / 30.0f, vs_UV.y + vs_Time / 50.0f + swing)).xyz;
+  //vec3 tex1 = texture(texture1, vec2(vs_UV.x + vs_Time / 27.0f, vs_UV.y - vs_Time / 40.0f)).xyz;
 
   //vec3 blended = normalize((unwrap_normal(tex0) + unwrap_normal(tex1)) / 2.0f);
   //float shade = clamp(1 - pow(dot(blended, vec3(0.0, 0.0, 1.0)), 0.8), 0.22, 0.75);
-  color = texture(texture0, vs_UV); //vec4(vs_Color * shade, 1.0);
+  color = vec4(vs_Color, 1.0); //texture(texture0, vs_UV); //vec4(vs_Color * shade, 1.0);
 }
 )";
 
@@ -238,31 +275,25 @@ int main(void)
   Window window;
   Clock clock;
 
-  GLuint shader_program = create_shader_program();
+  GLuint shader_program = create_shader_program(vertex_shader_code, fragment_shader_code);
   glUseProgram(shader_program);
 
-  RawModel cube = create_cube();
-
-  std::vector<float> square_data = {
-    -0.5, 0.0, -0.5, 0.6, 0.6, 0.9, 1.0, 1.0, 
-    -0.5, 0.0, 0.5, 0.6, 0.6, 0.9, 1.0, 0.0,  
-    0.5, 0.0, 0.5, 0.6, 0.6, 0.9, 0.0, 0.0,
-    0.5, 0.0, -0.5, 0.6, 0.6, 0.9, 0.0, 1.0,
-
+  std::vector<Vertex> square_data = {
+    Vertex{0.0, 0.0323266, 0.0, 0.6, 0.6, 0.9, 0.0, 1.0, 0.0, 1.0, 1.0}, 
+    Vertex{0.5, -0.0323266, 0.0, 0.6, 0.6, 0.9, 0.0, 1.0, 0.0, 0.0, 1.0},
+    Vertex{0.0, -0.0286148, 0.5, 0.6, 0.6, 0.9, 0.0, 1.0, 0.0, 1.0, 0.0},  
+    Vertex{0.5,  0.0286148, 0.5, 0.6, 0.6, 0.9, 0.0, 1.0, 0.0, 0.0, 0.0},
   };
 
   std::vector<uint32_t> square_indices = {
-    3, 0, 1, 
-    1, 2, 3
+    1, 0, 2, 
+    2, 3, 1
   };
 
-  RawModel water(square_data, square_indices);
-  //Texture water_texture("../water_image.jpg");
-  Texture water_normal1("../NormalMap.png");
-  Texture water_normal2("../NormalMap-2.png");
+  RawModel water(square_data, square_indices, GL_STATIC_DRAW);
   Texture white_texture;
-  Camera camera = { .position = glm::vec3(0.0, 0.0, 1.0),
-	  .yaw = 0.0, .pitch = 0.0,
+  Camera camera = { .position = glm::vec3(-2.0, 1.0, 2.0),
+	  .yaw = -45.0, .pitch = 0.0,
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
   };
 
@@ -311,6 +342,11 @@ int main(void)
   CUDA_ASSERT(cudaMalloc ((void**) &h_tk_device, sizeof(std::complex<double>) * N * N));
   CUDA_ASSERT(cudaMalloc ((void**) &h_k_device, sizeof(std::complex<double>) * N * N));
 
+  cufftHandle plan;
+  CUFFT_ASSERT(cufftPlan2d(&plan, N, N, CUFFT_Z2Z));
+
+  Image displacement_image(N, N, GL_RGB);
+
   // Setup h_tk + device
   for (int m = 0; m < N; m++) {
     for (int n = 0; n < N; n++) {
@@ -322,11 +358,8 @@ int main(void)
     }
   }
   CUDA_ASSERT(cudaMemcpy(h_tk_device, h_tk, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
-
-  cufftHandle plan;
-  CUFFT_ASSERT(cufftPlan2d(&plan, N, N, CUFFT_Z2Z));
-  CUFFT_ASSERT(cufftExecZ2Z(plan, h_tk_device, h_k_device, CUFFT_INVERSE)); // Inverse FFT: h(k, x, t) = sum(h_tilde(k, x, t) * e^(2pikn / N))
-
+  // Inverse FFT: h(k, x, t) = sum(h_tilde(k, x, t) * e^(2pikn / N))
+  CUFFT_ASSERT(cufftExecZ2Z(plan, h_tk_device, h_k_device, CUFFT_INVERSE)); 
   CUDA_ASSERT(cudaMemcpy(h_k, h_k_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
 
   double min_r = std::numeric_limits<double>::max();
@@ -344,7 +377,6 @@ int main(void)
     }
   }
 
-  Image displacement_image(N, N, GL_RGB);
   for (int m = 0; m < N; m++) {
     for (int n = 0; n < N; n++) {
       int i = m * N + n;
@@ -352,15 +384,16 @@ int main(void)
       GLubyte color = value * 255;
       displacement_image.set_pixel(n, m, color, color, color);
     }
-  }  
+  }
+
+  RawModel water_surface = create_water_surface(h_k, N, 5.0);
 
   Texture displacement_tex(displacement_image);
-  // End wave simulation
 
   while (!window.should_close ())
   {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
     glClearColor(0.8, 0.85, 1.0, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
     glUseProgram(shader_program);
 
     update(window, clock.tick(), camera);
@@ -370,27 +403,16 @@ int main(void)
 
     glUniform1f(time_loc, clock.since_start());
 
-    cube.bind();
-    white_texture.bind(0);
-    glm::mat4 cube_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(2.0, 0.0, 0.0));
-    cube_matrix = glm::rotate(cube_matrix, glm::radians<float>(45.0f), glm::vec3(0.0, 0.0, 1.0));
-    glUniformMatrix4fv(model_loc, 1, false, &cube_matrix[0][0]);
-    cube.draw();
+    glm::mat4 water_matrix = glm::identity<glm::mat4>();
+    //water_matrix = glm::rotate(water_matrix, glm::radians<float>(90.f), glm::vec3(1.f, 0.f, 0.f));
+    glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
 
-    water.bind();
-    displacement_tex.bind(0);
-    /*water_normal1.bind(0);
-    water_normal2.bind(1);
-    for (int x = 0; x < 10; x++) {
-      for (int z = 0; z < 10; z++) {*/
-        //glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(-5.0 + x, 0.0, -7.0 + z));
-        glm::mat4 water_matrix = glm::identity<glm::mat4>();
-        water_matrix = glm::rotate(water_matrix, glm::radians<float>(90.f), glm::vec3(1.f, 0.f, 0.f));
-        glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
-        water.draw();
-      /*}
-    }*/
-    
+    water_surface.bind();
+    water_surface.draw();
+
+    //water.bind();
+    //displacement_tex.bind(0);
+    //water.draw();
 
     window.swap_buffers ();
     window.poll_events ();
@@ -430,12 +452,12 @@ void update(const Window& window, double dt, Camera& camera) {
   }
 }
 
-GLuint create_shader_program() {
+GLuint create_shader_program(const char* vs_code, const char* fs_code) {
   int success;
   char infoLog[512];
 
   GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-  glShaderSource(vs, 1, &vertex_shader_code, NULL);
+  glShaderSource(vs, 1, &vs_code, NULL);
   glCompileShader(vs);
   glGetShaderiv(vs, GL_COMPILE_STATUS, &success);
   if(!success) {
@@ -444,7 +466,7 @@ GLuint create_shader_program() {
   };
 
   GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(fs, 1, &fragment_shader_code, NULL);
+  glShaderSource(fs, 1, &fs_code, NULL);
   glCompileShader(fs);
   glGetShaderiv(fs, GL_COMPILE_STATUS, &success);
   if(!success) {
@@ -466,33 +488,36 @@ GLuint create_shader_program() {
   return program;
 };
 
-RawModel create_cube() {
-   std::vector<float> cube_data = {
-    // x, y, z, r, g, b, u, v
-    -0.5f, -0.5f, -0.5f, 0.0, 1.0, 0.0, 0.0, 0.0,
-    0.5f, -0.5f, -0.5f, 0.0, 1.0, 0.0, 0.0, 0.0,
-    -0.5f, 0.5f, -0.5f, 0.0, 1.0, 0.0, 0.0, 0.0,
-    0.5f, 0.5f, -0.5f, 0.0, 1.0, 0.0, 0.0, 0.0,
-    -0.5f, -0.5f, 0.5f, 1.0, 0.0, 0.0, 0.0, 0.0,
-    0.5f, -0.5f, 0.5f, 1.0, 0.0, 0.0, 0.0, 0.0,
-    -0.5f, 0.5f, 0.5f, 1.0, 0.0, 0.0, 0.0, 0.0,
-    0.5f, 0.5f, 0.5f, 1.0, 0.0, 0.0, 0.0, 0.0,
-  };
+RawModel create_water_surface(const std::complex<double>* displacement, uint32_t N, uint32_t L) {
+  std::vector<Vertex> vertices(N * N);
+  std::vector<uint32_t> indices; //((N - 1) * (N - 1) * 6);
+  indices.reserve(N * N * 6);
+  for (int z = 0; z < N; z++) {
+    for (int x = 0; x < N; x++) {
+      int i0 = z * N + x;
+      float y = displacement[i0].real();
+      Vertex vertex;
+      vertex.position[0] = x * L / float(N);
+      vertex.position[1] = y;
+      vertex.position[2] = z * L / float(N);
+      vertex.color[0] = 0.3;
+      vertex.color[1] = 0.6; 
+      vertex.color[2] = 0.9;
+      vertices[i0] = vertex;
 
-  std::vector<uint32_t> cube_indices = {
-    1, 0, 3, // Back
-    3, 0, 2, 
-    2, 0, 4, // Left
-    4, 6, 2,
-    4, 5, 7, // Front
-    7, 6, 4,
-    3, 7, 5, // Right
-    5, 1, 3,
-    2, 6, 7, // Top
-    7, 3, 2,
-    4, 0, 1, // Bottom
-    1, 5, 4,
-  };
+      if (x < N - 1 && z < N - 1) {
+        int i1 = (z + 1) * N + x;
+        int i2 = (z + 1) * N + (x + 1);
+        int i3 = z * N + (x + 1);
+        indices.push_back(i3);
+        indices.push_back(i0);
+        indices.push_back(i1);
+        indices.push_back(i1);
+        indices.push_back(i2);
+        indices.push_back(i3);
+      }
+    }
+  }
 
-  return RawModel(cube_data, cube_indices);
+  return RawModel(vertices, indices, GL_DYNAMIC_DRAW);
 }
