@@ -28,6 +28,7 @@ struct Texture {
     Texture(const char* filename);
     Texture(Image image);
 
+    inline GLuint get_texture_id() { return this->renderer_id; };
     inline void bind(uint32_t slot) const {
         glActiveTexture(GL_TEXTURE0 + slot);
         glBindTexture(GL_TEXTURE_2D, this->renderer_id);

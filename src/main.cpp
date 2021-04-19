@@ -23,19 +23,20 @@
 #include "framebuffer.h"
 
 struct Vertex {
-  float position[3];
-  float color[3];
-  float normal[3];
-  float uv[2];
+  glm::vec3 position;
+  glm::vec3 color;
+  glm::vec3 normal;
+  glm::vec2 uv;
 };
 
 /** STRUCTS */
 struct RawModel {
-  RawModel(const std::vector<Vertex>& data, const std::vector<uint32_t>& indices, GLenum usage) {
+  RawModel(const std::vector<Vertex>& data, const std::vector<uint32_t>& indices, GLenum usage) : gl_usage(usage) {
     assert((indices.size() % 3) == 0);
     int vertex_size = sizeof(Vertex);
 
     glGenVertexArrays(1, &this->renderer_id);
+    glBindVertexArray(this->renderer_id);
     glGenBuffers(1, &this->vbo);
     glBindBuffer(GL_ARRAY_BUFFER, this->vbo);
     glBufferData(GL_ARRAY_BUFFER, data.size() * vertex_size, &data[0], usage);
@@ -66,6 +67,16 @@ struct RawModel {
     glDeleteBuffers(1, renderer_id);*/
   }
 
+  void update_vertex_data(const std::vector<Vertex>& vertices) {
+    if (this->gl_usage == GL_DYNAMIC_DRAW || this->gl_usage == GL_STREAM_DRAW) {
+      this->bind();
+      glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(Vertex), &vertices[0]);
+      this->unbind();
+    } else {
+      std::cout << "ERROR (update_data): Usage of model data has to be GL_DYNAMIC_DRAW or GL_STREAM_DRAW" << std::endl;
+    }
+  }
+
   void bind() {
     glBindVertexArray(this->renderer_id);
   }
@@ -82,6 +93,8 @@ private:
   GLuint renderer_id;
   GLuint vbo;
   GLuint ebo;
+
+  GLenum gl_usage;
 
   uint32_t index_count;
 };
@@ -192,7 +205,7 @@ private:
 void update(const Window& window, double dt, Camera& camera);
 GLuint create_shader_program(const char* vs_code, const char* fs_code);
 GLuint create_model_vao(float* data, size_t data_size, uint32_t* indices, size_t indices_size);
-RawModel create_water_surface(const std::complex<double>* displacement, uint32_t N, uint32_t L);
+void update_surface_vertices(uint32_t N, std::vector<Vertex>& vertices, std::complex<double>* displacement);
 
 const char* texture_vs_code = R"(
 #version 410 core
@@ -229,6 +242,9 @@ layout(location = 3) in vec2 a_UV;
 layout(location = 0) out vec3 vs_Color;
 layout(location = 1) out vec2 vs_UV;
 layout(location = 2) out float vs_Time;
+layout(location = 3) out vec3 vs_Normal;
+layout(location = 4) out vec3 vs_LightDir;
+layout(location = 5) out vec3 vs_CameraDir;
 
 uniform mat4 u_ViewProjection;
 uniform mat4 u_Model;
@@ -239,7 +255,12 @@ void main()
   vs_Time = u_Time;
   vs_Color = a_Color;
   vs_UV = a_UV;
-  gl_Position = u_ViewProjection * u_Model * vec4(a_Pos, 1.0); 
+  vs_Normal = (u_Model * vec4(a_Normal, 0.0)).xyz;
+  vs_LightDir = vec3(0.0, 1.0, 0.0);
+
+  vec4 m_Pos = u_Model * vec4(a_Pos, 1.0);
+  vs_CameraDir = normalize(-m_Pos.xyz);
+  gl_Position = u_ViewProjection * m_Pos; 
 }
 )";
 
@@ -250,6 +271,9 @@ out vec4 color;
 layout(location = 0) in vec3 vs_Color;
 layout(location = 1) in vec2 vs_UV;
 layout(location = 2) in float vs_Time;
+layout(location = 3) in vec3 vs_Normal;
+layout(location = 4) in vec3 vs_LightDir;
+layout(location = 5) in vec3 vs_CameraDir;
 
 uniform sampler2D texture0;
 //uniform sampler2D texture1;
@@ -260,13 +284,12 @@ vec3 unwrap_normal(vec3 pixel) {
 
 void main()
 {
-  //float swing = sin(vs_Time) / 50.0f;
-  //vec3 tex0 = texture(texture0, vec2(vs_UV.x + vs_Time / 30.0f, vs_UV.y + vs_Time / 50.0f + swing)).xyz;
-  //vec3 tex1 = texture(texture1, vec2(vs_UV.x + vs_Time / 27.0f, vs_UV.y - vs_Time / 40.0f)).xyz;
-
-  //vec3 blended = normalize((unwrap_normal(tex0) + unwrap_normal(tex1)) / 2.0f);
-  //float shade = clamp(1 - pow(dot(blended, vec3(0.0, 0.0, 1.0)), 0.8), 0.22, 0.75);
-  color = vec4(vs_Color, 1.0); //texture(texture0, vs_UV); //vec4(vs_Color * shade, 1.0);
+  // Blinn-Phong illumination using half-way vector instead of reflection.
+  vec3 light_color = vec3(1.0, 1.0, 1.0);
+  vec3 halfwayDir = normalize(vs_LightDir + vs_CameraDir);  
+  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 20.0);
+  float diffuse = max(dot(vs_Normal, vs_LightDir), 0);
+  color = vec4(diffuse * vs_Color + specular * light_color, 1.0);
 }
 )";
 
@@ -279,10 +302,10 @@ int main(void)
   glUseProgram(shader_program);
 
   std::vector<Vertex> square_data = {
-    Vertex{0.0, 0.0323266, 0.0, 0.6, 0.6, 0.9, 0.0, 1.0, 0.0, 1.0, 1.0}, 
-    Vertex{0.5, -0.0323266, 0.0, 0.6, 0.6, 0.9, 0.0, 1.0, 0.0, 0.0, 1.0},
-    Vertex{0.0, -0.0286148, 0.5, 0.6, 0.6, 0.9, 0.0, 1.0, 0.0, 1.0, 0.0},  
-    Vertex{0.5,  0.0286148, 0.5, 0.6, 0.6, 0.9, 0.0, 1.0, 0.0, 0.0, 0.0},
+    Vertex{glm::vec3(-0.5, 0.0, -0.5), glm::vec3(0.6, 0.6, 0.9), glm::vec3(0.0, 1.0, 0.0), glm::vec2(1.0, 1.0)}, 
+    Vertex{glm::vec3(0.5, 0, -0.5), glm::vec3(0.6, 0.6, 0.9), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 1.0)},
+    Vertex{glm::vec3(-0.5, 0, 0.5), glm::vec3(0.6, 0.6, 0.9), glm::vec3(0.0, 1.0, 0.0), glm::vec2(1.0, 0.0)},  
+    Vertex{glm::vec3(0.5,  0, 0.5), glm::vec3(0.6, 0.6, 0.9), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)},
   };
 
   std::vector<uint32_t> square_indices = {
@@ -292,8 +315,8 @@ int main(void)
 
   RawModel water(square_data, square_indices, GL_STATIC_DRAW);
   Texture white_texture;
-  Camera camera = { .position = glm::vec3(-2.0, 1.0, 2.0),
-	  .yaw = -45.0, .pitch = 0.0,
+  Camera camera = { .position = glm::vec3(0.0, 3.0, 10.0),
+	  .yaw = 0.0, .pitch = 0.0,
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
   };
 
@@ -316,8 +339,36 @@ int main(void)
 
   // Wave simulation
   const int N = 128;
-  double length = 128;
+  double length = 180;
   double two_pi = glm::two_pi<double>();
+
+  std::vector<Vertex> vertices(N * N);
+  std::vector<uint32_t> indices; //((N - 1) * (N - 1) * 6);
+  indices.reserve(N * N * 6);
+  float tile_dim = 5.0;
+  for (int z = 0; z < N; z++) {
+    for (int x = 0; x < N; x++) {
+      int i0 = z * N + x;
+      Vertex vertex;
+      vertex.position = glm::vec3(-0.5 + x * tile_dim / float(N), 0, -0.5 + z * tile_dim / float(N));
+      vertex.color = glm::vec3(0.1, 0.3, 0.5);
+      vertices[i0] = vertex;
+
+      if (x < N - 1 && z < N - 1) {
+        int i1 = (z + 1) * N + x;
+        int i2 = (z + 1) * N + (x + 1);
+        int i3 = z * N + (x + 1);
+        indices.push_back(i3);
+        indices.push_back(i0);
+        indices.push_back(i1);
+        indices.push_back(i1);
+        indices.push_back(i2);
+        indices.push_back(i3);
+      }
+    }
+  }
+
+  RawModel water_surface(vertices, indices, GL_DYNAMIC_DRAW);
 
   std::complex<double>* h0_tk = new std::complex<double>[N * N]; // h0_tilde(k)
   std::complex<double>* h0_tmk = new std::complex<double>[N * N]; // h0_tilde(-k)
@@ -347,51 +398,57 @@ int main(void)
 
   Image displacement_image(N, N, GL_RGB);
 
-  // Setup h_tk + device
-  for (int m = 0; m < N; m++) {
-    for (int n = 0; n < N; n++) {
-      int i = m * N + n;
-      float kx = (n - N / 2.f) * two_pi / length;
-      float kz = (m - N / 2.f) * two_pi / length;
-      glm::vec2 K(kx, kz);
-      h_tk[i] = h_tilde(h0_tk[i], h0_tmk[i], K, clock.since_start());
+  uint32_t displacement_id = 0;
+
+  while (!window.should_close ()) {
+    // Setup h_tk + device
+    for (int m = 0; m < N; m++) {
+      for (int n = 0; n < N; n++) {
+        int i = m * N + n;
+        float kx = (n - N / 2.f) * two_pi / length;
+        float kz = (m - N / 2.f) * two_pi / length;
+        glm::vec2 K(kx, kz);
+        h_tk[i] = h_tilde(h0_tk[i], h0_tmk[i], K, clock.since_start());
+      }
     }
-  }
-  CUDA_ASSERT(cudaMemcpy(h_tk_device, h_tk, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
-  // Inverse FFT: h(k, x, t) = sum(h_tilde(k, x, t) * e^(2pikn / N))
-  CUFFT_ASSERT(cufftExecZ2Z(plan, h_tk_device, h_k_device, CUFFT_INVERSE)); 
-  CUDA_ASSERT(cudaMemcpy(h_k, h_k_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
+    CUDA_ASSERT(cudaMemcpy(h_tk_device, h_tk, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
+    // Inverse FFT: h(k, x, t) = sum(h_tilde(k, x, t) * e^(2pikn / N))
+    CUFFT_ASSERT(cufftExecZ2Z(plan, h_tk_device, h_k_device, CUFFT_INVERSE)); 
+    CUDA_ASSERT(cudaMemcpy(h_k, h_k_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
 
-  double min_r = std::numeric_limits<double>::max();
-  double max_r = std::numeric_limits<double>::min();
-  for (int m = 0; m < N; m++) {
-    for (int n = 0; n < N; n++) {
-      int i = m * N + n;
-      int sign = (m + n) % 2 == 0 ? 1 : -1; // Larsson (2012), Equation 4.6
-      h_k[i] /= sign * (N * N);
-
-      if (h_k[i].real() < min_r)
-        min_r = h_k[i].real();
-      if (h_k[i].real() > max_r)
-        max_r = h_k[i].real();
+    for (int m = 0; m < N; m++) {
+      for (int n = 0; n < N; n++) {
+        int i = m * N + n;
+        int sign = (m + n) % 2 == 0 ? 1 : -1; // Larsson (2012), Equation 4.6
+        h_k[i] /= sign * (N * N);
+      }
     }
-  }
 
-  for (int m = 0; m < N; m++) {
-    for (int n = 0; n < N; n++) {
-      int i = m * N + n;
-      double value = h_k[i].real() - min_r / (max_r - min_r);
-      GLubyte color = value * 255;
-      displacement_image.set_pixel(n, m, color, color, color);
+    if (!displacement_id) {
+      double min = 5;
+      double max = -5;
+      for (int m = 0; m < N; m++) {
+        for (int n = 0; n < N; n++) {
+          int i = m * N + n;
+          if (h_k[i].real() < min)
+            min = h_k[i].real();
+          if (h_k[i].real() > max)
+            max = h_k[i].real();
+        }
+      }
+
+      for (int m = 0; m < N; m++) {
+        for (int n = 0; n < N; n++) {
+          int i = m * N + n;
+          float value = (h_k[i].real() - min) / (max - min);
+          char color = 255 * value;
+          displacement_image.set_pixel(n, m, color, color, color);
+        }
+      }
+      Texture displacement_tex(displacement_image);
+      displacement_id = displacement_tex.get_texture_id();
     }
-  }
 
-  RawModel water_surface = create_water_surface(h_k, N, 5.0);
-
-  Texture displacement_tex(displacement_image);
-
-  while (!window.should_close ())
-  {
     glClearColor(0.8, 0.85, 1.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
     glUseProgram(shader_program);
@@ -403,16 +460,39 @@ int main(void)
 
     glUniform1f(time_loc, clock.since_start());
 
+
+    /*for (int y = 0; y < 10; y++) {
+      for (int x = 0; x < 10; x++) {
+        glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(-5.f + x, -5.f + y, 0.0));
+        water_matrix = glm::rotate(water_matrix, glm::radians<float>(90), glm::vec3(1.0, 0.0, 0.0));
+        glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
+        water.bind();
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, displacement_id);
+        water.draw();
+      }
+    }*/
+
+
     glm::mat4 water_matrix = glm::identity<glm::mat4>();
-    //water_matrix = glm::rotate(water_matrix, glm::radians<float>(90.f), glm::vec3(1.f, 0.f, 0.f));
+    water_matrix = glm::rotate(water_matrix, glm::radians<float>(0), glm::vec3(1.0, 0.0, 0.0));
     glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
 
-    water_surface.bind();
-    water_surface.draw();
+    update_surface_vertices(N, vertices, h_k);
+    water_surface.update_vertex_data(vertices);
 
-    //water.bind();
-    //displacement_tex.bind(0);
-    //water.draw();
+    water_surface.bind();
+    int num_tiles = 10;
+    for (int z = 0; z < num_tiles; z++) {
+      for (int x = 0; x < num_tiles; x++) {
+        glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), 
+          glm::vec3(tile_dim * (-num_tiles / 2.0f + x), 0.0, tile_dim * (-num_tiles / 2.0f + z))
+        );
+        //water_matrix = glm::rotate(water_matrix, glm::radians<float>(0), glm::vec3(1.0, 0.0, 0.0));
+        glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
+        water_surface.draw();
+      }
+    }
 
     window.swap_buffers ();
     window.poll_events ();
@@ -488,36 +568,69 @@ GLuint create_shader_program(const char* vs_code, const char* fs_code) {
   return program;
 };
 
-RawModel create_water_surface(const std::complex<double>* displacement, uint32_t N, uint32_t L) {
-  std::vector<Vertex> vertices(N * N);
-  std::vector<uint32_t> indices; //((N - 1) * (N - 1) * 6);
-  indices.reserve(N * N * 6);
+void update_surface_vertices(uint32_t N, std::vector<Vertex>& vertices, std::complex<double>* displacement) {
+  for (int i = 0; i < vertices.size(); i++)
+    vertices[i].position.y = displacement[i].real();
+
+
+  // Add normals for all 8 triangles connecting to every vertex. Then normalize the result.
   for (int z = 0; z < N; z++) {
     for (int x = 0; x < N; x++) {
-      int i0 = z * N + x;
-      float y = displacement[i0].real();
-      Vertex vertex;
-      vertex.position[0] = x * L / float(N);
-      vertex.position[1] = y;
-      vertex.position[2] = z * L / float(N);
-      vertex.color[0] = 0.3;
-      vertex.color[1] = 0.6; 
-      vertex.color[2] = 0.9;
-      vertices[i0] = vertex;
+      glm::vec3 sum_normals(0.0, 0.0, 0.0);
+      int i = z * N + x;
+      glm::vec3 middle = vertices[i].position;
+      if (x > 0) {
+        glm::vec3 left = vertices[i - 1].position;
+        if (z > 0) {
+          glm::vec3 bottom = vertices[i - N].position;
+          glm::vec3 bottom_left = vertices[i - 1 - N].position;
+          glm::vec3 v1 = glm::normalize(bottom - middle);
+          glm::vec3 v2 = glm::normalize(bottom_left - middle);
+          sum_normals += glm::cross(v1, v2);
+          
+          v1 = glm::normalize(bottom_left - middle);
+          v2 = glm::normalize(left - middle);
+          sum_normals += glm::cross(v1, v2);
+        }
+        if (z < N - 1) {
+          glm::vec3 top_left = vertices[i - 1 + N].position;
+          glm::vec3 v1 = glm::normalize(left - middle);
+          glm::vec3 v2 = glm::normalize(top_left - middle);
+          sum_normals += glm::cross(v1, v2);
 
-      if (x < N - 1 && z < N - 1) {
-        int i1 = (z + 1) * N + x;
-        int i2 = (z + 1) * N + (x + 1);
-        int i3 = z * N + (x + 1);
-        indices.push_back(i3);
-        indices.push_back(i0);
-        indices.push_back(i1);
-        indices.push_back(i1);
-        indices.push_back(i2);
-        indices.push_back(i3);
+          glm::vec3 top = vertices[i + N].position;
+          v1 = glm::normalize(top_left - middle);
+          v2 = glm::normalize(top - middle);
+          sum_normals += glm::cross(v1, v2);
+        }
       }
+      if (x < N - 1) {
+        glm::vec3 right = vertices[i + 1].position;
+        if (z < N - 1) {
+          glm::vec3 top = vertices[i + N].position;
+          glm::vec3 top_right = vertices[i + 1 + N].position;
+          glm::vec3 v1 = glm::normalize(top - middle);
+          glm::vec3 v2 = glm::normalize(top_right - middle);
+          sum_normals += glm::cross(v1, v2);
+
+          v1 = glm::normalize(top_right - middle);
+          v2 = glm::normalize(right - middle);
+          sum_normals += glm::cross(v1, v2);
+        }
+        if (z > 0) {
+          glm::vec3 bottom_right = vertices[i + 1 - N].position;
+          glm::vec3 v1 = glm::normalize(right - middle);
+          glm::vec3 v2 = glm::normalize(bottom_right - middle);
+          sum_normals += glm::cross(v1, v2);
+
+          glm::vec3 bottom = vertices[i - N].position;
+          v1 = glm::normalize(bottom_right - middle);
+          v2 = glm::normalize(bottom - middle);
+          sum_normals += glm::cross(v1, v2);
+        }
+      }
+
+      vertices[i].normal = glm::normalize(sum_normals);
     }
   }
-
-  return RawModel(vertices, indices, GL_DYNAMIC_DRAW);
 }
