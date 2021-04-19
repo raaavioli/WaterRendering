@@ -278,10 +278,6 @@ layout(location = 5) in vec3 vs_CameraDir;
 uniform sampler2D texture0;
 //uniform sampler2D texture1;
 
-vec3 unwrap_normal(vec3 pixel) {
-  return (pixel / 256.0f);
-}
-
 void main()
 {
   // Blinn-Phong illumination using half-way vector instead of reflection.
@@ -290,6 +286,7 @@ void main()
   float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 20.0);
   float diffuse = max(dot(vs_Normal, vs_LightDir), 0);
   color = vec4(diffuse * vs_Color + specular * light_color, 1.0);
+  //color = texture(texture0, vs_UV); 
 }
 )";
 
@@ -338,26 +335,27 @@ int main(void)
   glUniform1i(tex1_loc, 1);
 
   // Wave simulation
-  const int N = 128;
-  double length = 180;
+  const int N = 256;
+  const int Np1 = N + 1;
+  double length = 256;
   double two_pi = glm::two_pi<double>();
 
-  std::vector<Vertex> vertices(N * N);
-  std::vector<uint32_t> indices; //((N - 1) * (N - 1) * 6);
+  std::vector<Vertex> vertices(Np1 * Np1);
+  std::vector<uint32_t> indices;
   indices.reserve(N * N * 6);
   float tile_dim = 5.0;
-  for (int z = 0; z < N; z++) {
-    for (int x = 0; x < N; x++) {
-      int i0 = z * N + x;
+  for (int z = 0; z < Np1; z++) {
+    for (int x = 0; x < Np1; x++) {
+      int i0 = z * Np1 + x;
       Vertex vertex;
       vertex.position = glm::vec3(-0.5 + x * tile_dim / float(N), 0, -0.5 + z * tile_dim / float(N));
       vertex.color = glm::vec3(0.1, 0.3, 0.5);
       vertices[i0] = vertex;
 
-      if (x < N - 1 && z < N - 1) {
-        int i1 = (z + 1) * N + x;
-        int i2 = (z + 1) * N + (x + 1);
-        int i3 = z * N + (x + 1);
+      if (x < N && z < N) {
+        int i1 = (z + 1) * Np1 + x;
+        int i2 = (z + 1) * Np1 + (x + 1);
+        int i3 = z * Np1 + (x + 1);
         indices.push_back(i3);
         indices.push_back(i0);
         indices.push_back(i1);
@@ -478,7 +476,7 @@ int main(void)
     water_matrix = glm::rotate(water_matrix, glm::radians<float>(0), glm::vec3(1.0, 0.0, 0.0));
     glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
 
-    update_surface_vertices(N, vertices, h_k);
+    update_surface_vertices(Np1, vertices, h_k);
     water_surface.update_vertex_data(vertices);
 
     water_surface.bind();
@@ -568,22 +566,28 @@ GLuint create_shader_program(const char* vs_code, const char* fs_code) {
   return program;
 };
 
-void update_surface_vertices(uint32_t N, std::vector<Vertex>& vertices, std::complex<double>* displacement) {
-  for (int i = 0; i < vertices.size(); i++)
-    vertices[i].position.y = displacement[i].real();
+void update_surface_vertices(uint32_t Np1, std::vector<Vertex>& vertices, std::complex<double>* displacement) {
+  uint32_t N = Np1 - 1;
+  for (int z = 0; z < Np1; z++) {
+    for (int x = 0; x < Np1; x++) {
+      int i_v = z * Np1 + x;
+      int i_d = (z % N) * N + x % N;
+      vertices[i_v].position.y = displacement[i_d].real();
+    }
+  }
 
 
   // Add normals for all 8 triangles connecting to every vertex. Then normalize the result.
-  for (int z = 0; z < N; z++) {
-    for (int x = 0; x < N; x++) {
+  for (int z = 0; z < Np1; z++) {
+    for (int x = 0; x < Np1; x++) {
       glm::vec3 sum_normals(0.0, 0.0, 0.0);
-      int i = z * N + x;
+      int i = z * Np1 + x;
       glm::vec3 middle = vertices[i].position;
       if (x > 0) {
         glm::vec3 left = vertices[i - 1].position;
         if (z > 0) {
-          glm::vec3 bottom = vertices[i - N].position;
-          glm::vec3 bottom_left = vertices[i - 1 - N].position;
+          glm::vec3 bottom = vertices[i - Np1].position;
+          glm::vec3 bottom_left = vertices[i - 1 - Np1].position;
           glm::vec3 v1 = glm::normalize(bottom - middle);
           glm::vec3 v2 = glm::normalize(bottom_left - middle);
           sum_normals += glm::cross(v1, v2);
@@ -592,23 +596,23 @@ void update_surface_vertices(uint32_t N, std::vector<Vertex>& vertices, std::com
           v2 = glm::normalize(left - middle);
           sum_normals += glm::cross(v1, v2);
         }
-        if (z < N - 1) {
-          glm::vec3 top_left = vertices[i - 1 + N].position;
+        if (z < Np1 - 1) {
+          glm::vec3 top_left = vertices[i - 1 + Np1].position;
           glm::vec3 v1 = glm::normalize(left - middle);
           glm::vec3 v2 = glm::normalize(top_left - middle);
           sum_normals += glm::cross(v1, v2);
 
-          glm::vec3 top = vertices[i + N].position;
+          glm::vec3 top = vertices[i + Np1].position;
           v1 = glm::normalize(top_left - middle);
           v2 = glm::normalize(top - middle);
           sum_normals += glm::cross(v1, v2);
         }
       }
-      if (x < N - 1) {
+      if (x < Np1 - 1) {
         glm::vec3 right = vertices[i + 1].position;
-        if (z < N - 1) {
-          glm::vec3 top = vertices[i + N].position;
-          glm::vec3 top_right = vertices[i + 1 + N].position;
+        if (z < Np1 - 1) {
+          glm::vec3 top = vertices[i + Np1].position;
+          glm::vec3 top_right = vertices[i + 1 + Np1].position;
           glm::vec3 v1 = glm::normalize(top - middle);
           glm::vec3 v2 = glm::normalize(top_right - middle);
           sum_normals += glm::cross(v1, v2);
@@ -618,12 +622,12 @@ void update_surface_vertices(uint32_t N, std::vector<Vertex>& vertices, std::com
           sum_normals += glm::cross(v1, v2);
         }
         if (z > 0) {
-          glm::vec3 bottom_right = vertices[i + 1 - N].position;
+          glm::vec3 bottom_right = vertices[i + 1 - Np1].position;
           glm::vec3 v1 = glm::normalize(right - middle);
           glm::vec3 v2 = glm::normalize(bottom_right - middle);
           sum_normals += glm::cross(v1, v2);
 
-          glm::vec3 bottom = vertices[i - N].position;
+          glm::vec3 bottom = vertices[i - Np1].position;
           v1 = glm::normalize(bottom_right - middle);
           v2 = glm::normalize(bottom - middle);
           sum_normals += glm::cross(v1, v2);
