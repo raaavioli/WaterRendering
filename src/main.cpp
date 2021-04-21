@@ -8,8 +8,8 @@
 #include <cuda.h>
 #include <cufft.h>
 
-#define CUDA_ASSERT(err) if(err != cudaSuccess) std::cout << "Cuda Error: " << err << std::endl;
-#define CUFFT_ASSERT(err) if(err != CUFFT_SUCCESS) std::cout << "Cufft Error: " << err << std::endl;
+#define CUDA_ASSERT(err) if(err != cudaSuccess) std::cout << "Cuda Error: " << err << ", Line: " << __LINE__ << std::endl;
+#define CUFFT_ASSERT(err) if(err != CUFFT_SUCCESS) std::cout << "Cufft Error: " << err << ", Line: " << __LINE__ << std::endl;
 
 // GL
 #include <glad/glad.h>
@@ -205,7 +205,9 @@ private:
 void update(const Window& window, double dt, Camera& camera);
 GLuint create_shader_program(const char* vs_code, const char* fs_code);
 GLuint create_model_vao(float* data, size_t data_size, uint32_t* indices, size_t indices_size);
-void update_surface_vertices(uint32_t N, std::vector<Vertex>& vertices, std::complex<double>* displacement);
+void update_surface_vertices(uint32_t Nplus1, std::vector<Vertex>& vertices, const std::vector<glm::vec3>& origin_positions,
+  std::complex<double>* displacement_x, std::complex<double>* displacement_y, std::complex<double>* displacement_z,
+  std::complex<double>* gradient_x, std::complex<double>* gradient_y);
 
 const char* texture_vs_code = R"(
 #version 410 core
@@ -245,6 +247,7 @@ layout(location = 2) out float vs_Time;
 layout(location = 3) out vec3 vs_Normal;
 layout(location = 4) out vec3 vs_LightDir;
 layout(location = 5) out vec3 vs_CameraDir;
+layout(location = 6) out vec3 vs_Pos;
 
 uniform mat4 u_ViewProjection;
 uniform mat4 u_Model;
@@ -257,6 +260,7 @@ void main()
   vs_UV = a_UV;
   vs_Normal = (u_Model * vec4(a_Normal, 0.0)).xyz;
   vs_LightDir = vec3(0.0, 1.0, 0.0);
+  vs_Pos = a_Pos;
 
   vec4 m_Pos = u_Model * vec4(a_Pos, 1.0);
   vs_CameraDir = normalize(-m_Pos.xyz);
@@ -274,6 +278,7 @@ layout(location = 2) in float vs_Time;
 layout(location = 3) in vec3 vs_Normal;
 layout(location = 4) in vec3 vs_LightDir;
 layout(location = 5) in vec3 vs_CameraDir;
+layout(location = 6) in vec3 vs_Pos;
 
 uniform sampler2D texture0;
 //uniform sampler2D texture1;
@@ -285,6 +290,13 @@ void main()
   vec3 halfwayDir = normalize(vs_LightDir + vs_CameraDir);  
   float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 20.0);
   float diffuse = max(dot(vs_Normal, vs_LightDir), 0);
+  
+  // Trip mode on.
+  //float height = normalize(vs_Pos).y;
+  //float xx = normalize(vs_Pos).x + (int(vs_Time) % 1000) / 1000.0f * normalize(vs_Pos).z;
+  //vec3 rand_color = vec3(0.8, 0.9, 1.0) - vec3(2.3*sin(height + vs_Time + xx), 13*cos(height + vs_Time - xx), 5*sin(height + vs_Time + xx)); 
+  //color = vec4(diffuse * rand_color + specular * light_color, 1.0);
+  
   color = vec4(diffuse * vs_Color + specular * light_color, 1.0);
   //color = texture(texture0, vs_UV); 
 }
@@ -312,7 +324,7 @@ int main(void)
 
   RawModel water(square_data, square_indices, GL_STATIC_DRAW);
   Texture white_texture;
-  Camera camera = { .position = glm::vec3(0.0, 3.0, 10.0),
+  Camera camera = { .position = glm::vec3(0.0, 3.0, 1.0),
 	  .yaw = 0.0, .pitch = 0.0,
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
   };
@@ -325,6 +337,9 @@ int main(void)
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+  // Wire frame
+  //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+
   GLuint view_proj_loc = glGetUniformLocation(shader_program, "u_ViewProjection");
   GLuint model_loc = glGetUniformLocation(shader_program, "u_Model");
   GLuint time_loc = glGetUniformLocation(shader_program, "u_Time");
@@ -336,26 +351,28 @@ int main(void)
 
   // Wave simulation
   const int N = 256;
-  const int Np1 = N + 1;
-  double length = 256;
+  const int Nplus1 = N + 1;
+  double length = 300;
   double two_pi = glm::two_pi<double>();
 
-  std::vector<Vertex> vertices(Np1 * Np1);
+  std::vector<Vertex> vertices(Nplus1 * Nplus1);
+  std::vector<glm::vec3> origin_positions(Nplus1 * Nplus1);
   std::vector<uint32_t> indices;
   indices.reserve(N * N * 6);
   float tile_dim = 5.0;
-  for (int z = 0; z < Np1; z++) {
-    for (int x = 0; x < Np1; x++) {
-      int i0 = z * Np1 + x;
+  for (int z = 0; z < Nplus1; z++) {
+    for (int x = 0; x < Nplus1; x++) {
+      int i0 = z * Nplus1 + x;
       Vertex vertex;
       vertex.position = glm::vec3(-0.5 + x * tile_dim / float(N), 0, -0.5 + z * tile_dim / float(N));
       vertex.color = glm::vec3(0.1, 0.3, 0.5);
       vertices[i0] = vertex;
+      origin_positions[i0] = vertex.position;
 
       if (x < N && z < N) {
-        int i1 = (z + 1) * Np1 + x;
-        int i2 = (z + 1) * Np1 + (x + 1);
-        int i3 = z * Np1 + (x + 1);
+        int i1 = (z + 1) * Nplus1 + x;
+        int i2 = (z + 1) * Nplus1 + (x + 1);
+        int i3 = z * Nplus1 + (x + 1);
         indices.push_back(i3);
         indices.push_back(i0);
         indices.push_back(i1);
@@ -384,12 +401,24 @@ int main(void)
 
   std::complex<double>* h_tk = new std::complex<double>[N * N]; // h_tilde(k, x, t)
   std::complex<double>* h_k = new std::complex<double>[N * N]; // h(k, x, t)
+  std::complex<double>* h_k_disp_x = new std::complex<double>[N * N]; // x-displacement of h(k, x, t)
+  std::complex<double>* h_k_disp_z = new std::complex<double>[N * N]; // z-displacement of h(k, x, t)
+  std::complex<double>* dh_k_dx = new std::complex<double>[N * N]; // x-gradient of h(k, x, t)
+  std::complex<double>* dh_k_dz = new std::complex<double>[N * N]; // z-gradient of h(k, x, t)
 
   cufftDoubleComplex* h_tk_device;
   cufftDoubleComplex* h_k_device;
+  cufftDoubleComplex* h_k_disp_x_device;
+  cufftDoubleComplex* h_k_disp_z_device;
+  cufftDoubleComplex* dh_k_dx_device;
+  cufftDoubleComplex* dh_k_dz_device;
 
   CUDA_ASSERT(cudaMalloc ((void**) &h_tk_device, sizeof(std::complex<double>) * N * N));
   CUDA_ASSERT(cudaMalloc ((void**) &h_k_device, sizeof(std::complex<double>) * N * N));
+  CUDA_ASSERT(cudaMalloc ((void**) &h_k_disp_x_device, sizeof(std::complex<double>) * N * N));
+  CUDA_ASSERT(cudaMalloc ((void**) &h_k_disp_z_device, sizeof(std::complex<double>) * N * N));
+  CUDA_ASSERT(cudaMalloc ((void**) &dh_k_dx_device, sizeof(std::complex<double>) * N * N));
+  CUDA_ASSERT(cudaMalloc ((void**) &dh_k_dz_device, sizeof(std::complex<double>) * N * N));
 
   cufftHandle plan;
   CUFFT_ASSERT(cufftPlan2d(&plan, N, N, CUFFT_Z2Z));
@@ -407,18 +436,47 @@ int main(void)
         float kz = (m - N / 2.f) * two_pi / length;
         glm::vec2 K(kx, kz);
         h_tk[i] = h_tilde(h0_tk[i], h0_tmk[i], K, clock.since_start());
+        dh_k_dx[i] = h_tk[i] * std::complex<double>(0.0, kx);
+        dh_k_dz[i] = h_tk[i] * std::complex<double>(0.0, kz);
+        double k_length = glm::length(K);
+        if (k_length > 0.00001) {
+          h_k_disp_x[i] = h_tk[i] * std::complex<double>(0.0, -kx / k_length);
+          h_k_disp_z[i] = h_tk[i] * std::complex<double>(0.0, -kz / k_length);
+        } else {
+          h_k_disp_x[i] = h_tk[i] * std::complex<double>(0.0, 0.0);
+          h_k_disp_z[i] = h_tk[i] * std::complex<double>(0.0, 0.0);
+        }
       }
     }
+
     CUDA_ASSERT(cudaMemcpy(h_tk_device, h_tk, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
+    CUDA_ASSERT(cudaMemcpy(h_k_disp_x_device, h_k_disp_x, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
+    CUDA_ASSERT(cudaMemcpy(h_k_disp_z_device, h_k_disp_z, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
+    CUDA_ASSERT(cudaMemcpy(dh_k_dx_device, dh_k_dx, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
+    CUDA_ASSERT(cudaMemcpy(dh_k_dz_device, dh_k_dz, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
     // Inverse FFT: h(k, x, t) = sum(h_tilde(k, x, t) * e^(2pikn / N))
     CUFFT_ASSERT(cufftExecZ2Z(plan, h_tk_device, h_k_device, CUFFT_INVERSE)); 
+    // In place transforms
+    CUFFT_ASSERT(cufftExecZ2Z(plan, h_k_disp_x_device, h_k_disp_x_device, CUFFT_INVERSE)); 
+    CUFFT_ASSERT(cufftExecZ2Z(plan, h_k_disp_z_device, h_k_disp_z_device, CUFFT_INVERSE)); 
+    CUFFT_ASSERT(cufftExecZ2Z(plan, dh_k_dx_device, dh_k_dx_device, CUFFT_INVERSE)); 
+    CUFFT_ASSERT(cufftExecZ2Z(plan, dh_k_dz_device, dh_k_dz_device, CUFFT_INVERSE)); 
+
     CUDA_ASSERT(cudaMemcpy(h_k, h_k_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
+    CUDA_ASSERT(cudaMemcpy(h_k_disp_x, h_k_disp_x_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
+    CUDA_ASSERT(cudaMemcpy(h_k_disp_z, h_k_disp_z_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
+    CUDA_ASSERT(cudaMemcpy(dh_k_dx, dh_k_dx_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
+    CUDA_ASSERT(cudaMemcpy(dh_k_dz, dh_k_dz_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
 
     for (int m = 0; m < N; m++) {
       for (int n = 0; n < N; n++) {
         int i = m * N + n;
         int sign = (m + n) % 2 == 0 ? 1 : -1; // Larsson (2012), Equation 4.6
         h_k[i] /= sign * (N * N);
+        h_k_disp_x[i] /= sign * (N * N);
+        h_k_disp_z[i] /= sign * (N * N);
+        dh_k_dx[i] /= sign * (N * N);
+        dh_k_dz[i] /= sign * (N * N);
       }
     }
 
@@ -459,24 +517,24 @@ int main(void)
     glUniform1f(time_loc, clock.since_start());
 
 
-    /*for (int y = 0; y < 10; y++) {
-      for (int x = 0; x < 10; x++) {
-        glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(-5.f + x, -5.f + y, 0.0));
+    //for (int y = 0; y < 10; y++) {
+      //for (int x = 0; x < 10; x++) {
+        /*glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(0.0, 0.0, 0.0));
         water_matrix = glm::rotate(water_matrix, glm::radians<float>(90), glm::vec3(1.0, 0.0, 0.0));
         glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
         water.bind();
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, displacement_id);
-        water.draw();
-      }
-    }*/
+        water.draw();*/
+      //}
+    //}
 
 
     glm::mat4 water_matrix = glm::identity<glm::mat4>();
     water_matrix = glm::rotate(water_matrix, glm::radians<float>(0), glm::vec3(1.0, 0.0, 0.0));
     glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
 
-    update_surface_vertices(Np1, vertices, h_k);
+    update_surface_vertices(Nplus1, vertices, origin_positions, h_k, h_k_disp_x, h_k_disp_z, dh_k_dz, dh_k_dz);
     water_surface.update_vertex_data(vertices);
 
     water_surface.bind();
@@ -566,28 +624,31 @@ GLuint create_shader_program(const char* vs_code, const char* fs_code) {
   return program;
 };
 
-void update_surface_vertices(uint32_t Np1, std::vector<Vertex>& vertices, std::complex<double>* displacement) {
-  uint32_t N = Np1 - 1;
-  for (int z = 0; z < Np1; z++) {
-    for (int x = 0; x < Np1; x++) {
-      int i_v = z * Np1 + x;
+void update_surface_vertices(uint32_t Nplus1, std::vector<Vertex>& vertices, const std::vector<glm::vec3>& origin_positions,
+  std::complex<double>* displacement_y, std::complex<double>* displacement_x, std::complex<double>* displacement_z,
+  std::complex<double>* gradient_x, std::complex<double>* gradient_y) {
+  uint32_t N = Nplus1 - 1;
+  for (int z = 0; z < Nplus1; z++) {
+    for (int x = 0; x < Nplus1; x++) {
+      int i_v = z * Nplus1 + x;
       int i_d = (z % N) * N + x % N;
-      vertices[i_v].position.y = displacement[i_d].real();
+      glm::vec3 displacement(displacement_x[i_d].real(), displacement_y[i_d].real(), displacement_z[i_d].real());
+      vertices[i_v].position = origin_positions[i_v] + displacement; 
     }
   }
 
 
   // Add normals for all 8 triangles connecting to every vertex. Then normalize the result.
-  for (int z = 0; z < Np1; z++) {
-    for (int x = 0; x < Np1; x++) {
+  for (int z = 0; z < Nplus1; z++) {
+    for (int x = 0; x < Nplus1; x++) {
       glm::vec3 sum_normals(0.0, 0.0, 0.0);
-      int i = z * Np1 + x;
+      int i = z * Nplus1 + x;
       glm::vec3 middle = vertices[i].position;
       if (x > 0) {
         glm::vec3 left = vertices[i - 1].position;
         if (z > 0) {
-          glm::vec3 bottom = vertices[i - Np1].position;
-          glm::vec3 bottom_left = vertices[i - 1 - Np1].position;
+          glm::vec3 bottom = vertices[i - Nplus1].position;
+          glm::vec3 bottom_left = vertices[i - 1 - Nplus1].position;
           glm::vec3 v1 = glm::normalize(bottom - middle);
           glm::vec3 v2 = glm::normalize(bottom_left - middle);
           sum_normals += glm::cross(v1, v2);
@@ -596,23 +657,23 @@ void update_surface_vertices(uint32_t Np1, std::vector<Vertex>& vertices, std::c
           v2 = glm::normalize(left - middle);
           sum_normals += glm::cross(v1, v2);
         }
-        if (z < Np1 - 1) {
-          glm::vec3 top_left = vertices[i - 1 + Np1].position;
+        if (z < Nplus1 - 1) {
+          glm::vec3 top_left = vertices[i - 1 + Nplus1].position;
           glm::vec3 v1 = glm::normalize(left - middle);
           glm::vec3 v2 = glm::normalize(top_left - middle);
           sum_normals += glm::cross(v1, v2);
 
-          glm::vec3 top = vertices[i + Np1].position;
+          glm::vec3 top = vertices[i + Nplus1].position;
           v1 = glm::normalize(top_left - middle);
           v2 = glm::normalize(top - middle);
           sum_normals += glm::cross(v1, v2);
         }
       }
-      if (x < Np1 - 1) {
+      if (x < Nplus1 - 1) {
         glm::vec3 right = vertices[i + 1].position;
-        if (z < Np1 - 1) {
-          glm::vec3 top = vertices[i + Np1].position;
-          glm::vec3 top_right = vertices[i + 1 + Np1].position;
+        if (z < Nplus1 - 1) {
+          glm::vec3 top = vertices[i + Nplus1].position;
+          glm::vec3 top_right = vertices[i + 1 + Nplus1].position;
           glm::vec3 v1 = glm::normalize(top - middle);
           glm::vec3 v2 = glm::normalize(top_right - middle);
           sum_normals += glm::cross(v1, v2);
@@ -622,12 +683,12 @@ void update_surface_vertices(uint32_t Np1, std::vector<Vertex>& vertices, std::c
           sum_normals += glm::cross(v1, v2);
         }
         if (z > 0) {
-          glm::vec3 bottom_right = vertices[i + 1 - Np1].position;
+          glm::vec3 bottom_right = vertices[i + 1 - Nplus1].position;
           glm::vec3 v1 = glm::normalize(right - middle);
           glm::vec3 v2 = glm::normalize(bottom_right - middle);
           sum_normals += glm::cross(v1, v2);
 
-          glm::vec3 bottom = vertices[i - Np1].position;
+          glm::vec3 bottom = vertices[i - Nplus1].position;
           v1 = glm::normalize(bottom_right - middle);
           v2 = glm::normalize(bottom - middle);
           sum_normals += glm::cross(v1, v2);
