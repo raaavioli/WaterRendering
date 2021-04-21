@@ -259,7 +259,7 @@ void main()
   vs_Color = a_Color;
   vs_UV = a_UV;
   vs_Normal = (u_Model * vec4(a_Normal, 0.0)).xyz;
-  vs_LightDir = vec3(0.0, 1.0, 0.0);
+  vs_LightDir = normalize(vec3(0.0, 1.0, 0.0));
   vs_Pos = a_Pos;
 
   vec4 m_Pos = u_Model * vec4(a_Pos, 1.0);
@@ -286,10 +286,10 @@ uniform sampler2D texture0;
 void main()
 {
   // Blinn-Phong illumination using half-way vector instead of reflection.
-  vec3 light_color = vec3(1.0, 1.0, 1.0);
-  vec3 halfwayDir = normalize(vs_LightDir + vs_CameraDir);  
-  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 20.0);
-  float diffuse = max(dot(vs_Normal, vs_LightDir), 0);
+  vec3 light_color = 0.5 * vec3(1.0, 1.0, 1.0);
+  vec3 halfwayDir = normalize(vs_LightDir + vs_CameraDir);
+  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 10.0);
+  float diffuse = max(dot(vs_Normal, vs_LightDir), 0.0);
   
   // Trip mode on.
   //float height = normalize(vs_Pos).y;
@@ -297,7 +297,8 @@ void main()
   //vec3 rand_color = vec3(0.8, 0.9, 1.0) - vec3(2.3*sin(height + vs_Time + xx), 13*cos(height + vs_Time - xx), 5*sin(height + vs_Time + xx)); 
   //color = vec4(diffuse * rand_color + specular * light_color, 1.0);
   
-  color = vec4(diffuse * vs_Color + specular * light_color, 1.0);
+  vec3 brdf = diffuse * vs_Color + specular * light_color;
+  color = vec4(brdf, 1.0);
   //color = texture(texture0, vs_UV); 
 }
 )";
@@ -324,7 +325,7 @@ int main(void)
 
   RawModel water(square_data, square_indices, GL_STATIC_DRAW);
   Texture white_texture;
-  Camera camera = { .position = glm::vec3(0.0, 3.0, 1.0),
+  Camera camera = { .position = glm::vec3(0.0, 3.0, 10.0),
 	  .yaw = 0.0, .pitch = 0.0,
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
   };
@@ -365,7 +366,7 @@ int main(void)
       int i0 = z * Nplus1 + x;
       Vertex vertex;
       vertex.position = glm::vec3(-0.5 + x * tile_dim / float(N), 0, -0.5 + z * tile_dim / float(N));
-      vertex.color = glm::vec3(0.1, 0.3, 0.5);
+      vertex.color = glm::vec3(52 / 255.0, 155 / 255.0, 235 / 255.0);
       vertices[i0] = vertex;
       origin_positions[i0] = vertex.position;
 
@@ -519,7 +520,7 @@ int main(void)
 
     //for (int y = 0; y < 10; y++) {
       //for (int x = 0; x < 10; x++) {
-        /*glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(0.0, 0.0, 0.0));
+        /**glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(0.0, 0.0, 0.0));
         water_matrix = glm::rotate(water_matrix, glm::radians<float>(90), glm::vec3(1.0, 0.0, 0.0));
         glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
         water.bind();
@@ -531,20 +532,20 @@ int main(void)
 
 
     glm::mat4 water_matrix = glm::identity<glm::mat4>();
-    water_matrix = glm::rotate(water_matrix, glm::radians<float>(0), glm::vec3(1.0, 0.0, 0.0));
+    water_matrix = glm::rotate(water_matrix, glm::radians<float>(90), glm::vec3(1.0, 0.0, 0.0));
     glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
 
-    update_surface_vertices(Nplus1, vertices, origin_positions, h_k, h_k_disp_x, h_k_disp_z, dh_k_dz, dh_k_dz);
+    update_surface_vertices(Nplus1, vertices, origin_positions, h_k_disp_x, h_k, h_k_disp_z, dh_k_dx, dh_k_dz);
     water_surface.update_vertex_data(vertices);
 
     water_surface.bind();
-    int num_tiles = 10;
+    int num_tiles = 3;
     for (int z = 0; z < num_tiles; z++) {
       for (int x = 0; x < num_tiles; x++) {
         glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), 
-          glm::vec3(tile_dim * (-num_tiles / 2.0f + x), 0.0, tile_dim * (-num_tiles / 2.0f + z))
+          glm::vec3(tile_dim * (-num_tiles / 2.0f + x), 0.0, -3.0 + tile_dim * (-num_tiles / 2.0f + z))
         );
-        //water_matrix = glm::rotate(water_matrix, glm::radians<float>(0), glm::vec3(1.0, 0.0, 0.0));
+        //water_matrix = glm::rotate(water_matrix, glm::radians<float>(90), glm::vec3(1.0, 0.0, 0.0));
         glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
         water_surface.draw();
       }
@@ -625,77 +626,38 @@ GLuint create_shader_program(const char* vs_code, const char* fs_code) {
 };
 
 void update_surface_vertices(uint32_t Nplus1, std::vector<Vertex>& vertices, const std::vector<glm::vec3>& origin_positions,
-  std::complex<double>* displacement_y, std::complex<double>* displacement_x, std::complex<double>* displacement_z,
-  std::complex<double>* gradient_x, std::complex<double>* gradient_y) {
+  std::complex<double>* displacement_x, std::complex<double>* displacement_y, std::complex<double>* displacement_z,
+  std::complex<double>* gradient_x, std::complex<double>* gradient_z) {
   uint32_t N = Nplus1 - 1;
-  for (int z = 0; z < Nplus1; z++) {
-    for (int x = 0; x < Nplus1; x++) {
+  double max_x = std::numeric_limits<double>().min();
+  double min_x = std::numeric_limits<double>().max();
+  double max_z = std::numeric_limits<double>().min();
+  double min_z = std::numeric_limits<double>().max();
+  for (uint32_t z = 0; z < Nplus1; z++) {
+    for (uint32_t x = 0; x < Nplus1; x++) {
       int i_v = z * Nplus1 + x;
       int i_d = (z % N) * N + x % N;
-      glm::vec3 displacement(displacement_x[i_d].real(), displacement_y[i_d].real(), displacement_z[i_d].real());
-      vertices[i_v].position = origin_positions[i_v] + displacement; 
+      double lambda = -1.0;
+      glm::vec3 displacement(lambda * displacement_x[i_d].real(), displacement_y[i_d].real(), lambda * displacement_z[i_d].real());
+      vertices[i_v].position = origin_positions[i_v] + displacement;
+      if (gradient_x[i_d].real() > max_x)
+        max_x = gradient_x[i_d].real();
+      if (gradient_x[i_d].real() < min_x)
+        min_x = gradient_x[i_d].real();
+      if (gradient_z[i_d].real() > max_z)
+        max_z = gradient_z[i_d].real();
+      if (gradient_z[i_d].real() < min_z)
+        min_z = gradient_z[i_d].real();
     }
   }
 
-
-  // Add normals for all 8 triangles connecting to every vertex. Then normalize the result.
-  for (int z = 0; z < Nplus1; z++) {
-    for (int x = 0; x < Nplus1; x++) {
-      glm::vec3 sum_normals(0.0, 0.0, 0.0);
-      int i = z * Nplus1 + x;
-      glm::vec3 middle = vertices[i].position;
-      if (x > 0) {
-        glm::vec3 left = vertices[i - 1].position;
-        if (z > 0) {
-          glm::vec3 bottom = vertices[i - Nplus1].position;
-          glm::vec3 bottom_left = vertices[i - 1 - Nplus1].position;
-          glm::vec3 v1 = glm::normalize(bottom - middle);
-          glm::vec3 v2 = glm::normalize(bottom_left - middle);
-          sum_normals += glm::cross(v1, v2);
-          
-          v1 = glm::normalize(bottom_left - middle);
-          v2 = glm::normalize(left - middle);
-          sum_normals += glm::cross(v1, v2);
-        }
-        if (z < Nplus1 - 1) {
-          glm::vec3 top_left = vertices[i - 1 + Nplus1].position;
-          glm::vec3 v1 = glm::normalize(left - middle);
-          glm::vec3 v2 = glm::normalize(top_left - middle);
-          sum_normals += glm::cross(v1, v2);
-
-          glm::vec3 top = vertices[i + Nplus1].position;
-          v1 = glm::normalize(top_left - middle);
-          v2 = glm::normalize(top - middle);
-          sum_normals += glm::cross(v1, v2);
-        }
-      }
-      if (x < Nplus1 - 1) {
-        glm::vec3 right = vertices[i + 1].position;
-        if (z < Nplus1 - 1) {
-          glm::vec3 top = vertices[i + Nplus1].position;
-          glm::vec3 top_right = vertices[i + 1 + Nplus1].position;
-          glm::vec3 v1 = glm::normalize(top - middle);
-          glm::vec3 v2 = glm::normalize(top_right - middle);
-          sum_normals += glm::cross(v1, v2);
-
-          v1 = glm::normalize(top_right - middle);
-          v2 = glm::normalize(right - middle);
-          sum_normals += glm::cross(v1, v2);
-        }
-        if (z > 0) {
-          glm::vec3 bottom_right = vertices[i + 1 - Nplus1].position;
-          glm::vec3 v1 = glm::normalize(right - middle);
-          glm::vec3 v2 = glm::normalize(bottom_right - middle);
-          sum_normals += glm::cross(v1, v2);
-
-          glm::vec3 bottom = vertices[i - Nplus1].position;
-          v1 = glm::normalize(bottom_right - middle);
-          v2 = glm::normalize(bottom - middle);
-          sum_normals += glm::cross(v1, v2);
-        }
-      }
-
-      vertices[i].normal = glm::normalize(sum_normals);
+  for (uint32_t z = 0; z < Nplus1; z++) {
+    for (uint32_t x = 0; x < Nplus1; x++) {
+      int i_v = z * Nplus1 + x;
+      int i_d = (z % N) * N + x % N;
+      max_x = 0.99 * glm::max(abs(max_x), abs(min_x));
+      max_z = 0.99 * glm::max(abs(max_z), abs(min_z));
+      vertices[i_v].normal = glm::normalize(glm::vec3(-gradient_x[i_d].real() / max_x, 1.0, gradient_z[i_d].real() / max_z));
     }
   }
 }
