@@ -510,7 +510,9 @@ int main(void)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
     glUseProgram(shader_program);
 
-    update(window, clock.tick(), camera);
+    double time = clock.tick();
+    update(window, time, camera);
+    std::cout << 1 / time << " FPS" << std::endl;
 
     glm::mat4 view_projection = camera.get_view_projection();
     glUniformMatrix4fv(view_proj_loc, 1, false, &view_projection[0][0]);
@@ -655,9 +657,13 @@ void update_surface_vertices(uint32_t Nplus1, std::vector<Vertex>& vertices, con
     for (uint32_t x = 0; x < Nplus1; x++) {
       int i_v = z * Nplus1 + x;
       int i_d = (z % N) * N + x % N;
-      max_x = 0.99 * glm::max(abs(max_x), abs(min_x));
-      max_z = 0.99 * glm::max(abs(max_z), abs(min_z));
-      vertices[i_v].normal = glm::normalize(glm::vec3(-gradient_x[i_d].real() / max_x, 1.0, gradient_z[i_d].real() / max_z));
+      max_x = glm::max(abs(max_x), abs(min_x));
+      max_z = glm::max(abs(max_z), abs(min_z));
+      vertices[i_v].normal = glm::normalize(glm::vec3(
+        -gradient_x[i_d].real() / max_x, 
+        1.0, 
+        gradient_z[i_d].real() / max_z)
+      );
     }
   }
 }
