@@ -2,6 +2,7 @@
 #define WR_TEXTURE_H
 
 #include <iostream>
+#include <vector>
 
 #include <glad/glad.h>
 
@@ -23,10 +24,10 @@ private:
     GLenum gl_format;
 };
 
-struct Texture {
-    Texture();
-    Texture(const char* filename);
-    Texture(Image image);
+struct Texture2D {
+    Texture2D();
+    Texture2D(const char* filename);
+    Texture2D(Image image);
 
     inline GLuint get_texture_id() { return this->renderer_id; };
     inline void bind(uint32_t slot) const {
@@ -35,6 +36,21 @@ struct Texture {
     };
 
     inline void unbind() const { glBindTexture(GL_TEXTURE_2D, 0); };
+
+private:
+    GLuint renderer_id;
+};
+
+struct TextureCubeMap {
+    TextureCubeMap(std::vector<const char*> filenames);
+
+    inline GLuint get_texture_id() { return this->renderer_id; };
+    inline void bind(uint32_t slot) const {
+        glActiveTexture(GL_TEXTURE0 + slot);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, this->renderer_id);
+    };
+
+    inline void unbind() const { glBindTexture(GL_TEXTURE_CUBE_MAP, 0); };
 
 private:
     GLuint renderer_id;

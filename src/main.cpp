@@ -21,83 +21,8 @@
 #include "wave_utils.h"
 #include "texture.h"
 #include "framebuffer.h"
+#include "model.h"
 
-struct Vertex {
-  glm::vec3 position;
-  glm::vec3 color;
-  glm::vec3 normal;
-  glm::vec2 uv;
-};
-
-/** STRUCTS */
-struct RawModel {
-  RawModel(const std::vector<Vertex>& data, const std::vector<uint32_t>& indices, GLenum usage) : gl_usage(usage) {
-    assert((indices.size() % 3) == 0);
-    int vertex_size = sizeof(Vertex);
-
-    glGenVertexArrays(1, &this->renderer_id);
-    glBindVertexArray(this->renderer_id);
-    glGenBuffers(1, &this->vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, this->vbo);
-    glBufferData(GL_ARRAY_BUFFER, data.size() * vertex_size, &data[0], usage);
-    glGenBuffers(1, &this->ebo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this->ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), &indices[0], GL_STATIC_DRAW);
-    this->index_count = indices.size();
-
-    // Bind buffers to VAO
-    bind();
-    glBindBuffer(GL_ARRAY_BUFFER, this->vbo);
-    glEnableVertexAttribArray(0); // Position
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, vertex_size, (const void*) offsetof(Vertex, position));
-    glEnableVertexAttribArray(1); // Color
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, vertex_size, (const void*) offsetof(Vertex, color));
-    glEnableVertexAttribArray(2); // Normal
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, vertex_size, (const void*) offsetof(Vertex, normal));
-    glEnableVertexAttribArray(3); // UV
-    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, vertex_size, (const void*) offsetof(Vertex, uv));
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this->ebo);
-    unbind();
-  };
-
-  ~RawModel() {
-    // Wish to delete buffers here but may cause problems
-    /*glDeleteBuffers(1, ebo);
-    glDeleteBuffers(1, vbo);
-    glDeleteBuffers(1, renderer_id);*/
-  }
-
-  void update_vertex_data(const std::vector<Vertex>& vertices) {
-    if (this->gl_usage == GL_DYNAMIC_DRAW || this->gl_usage == GL_STREAM_DRAW) {
-      this->bind();
-      glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(Vertex), &vertices[0]);
-      this->unbind();
-    } else {
-      std::cout << "ERROR (update_data): Usage of model data has to be GL_DYNAMIC_DRAW or GL_STREAM_DRAW" << std::endl;
-    }
-  }
-
-  void bind() {
-    glBindVertexArray(this->renderer_id);
-  }
-
-  void unbind() {
-    glBindVertexArray(0);
-  }
-
-  void draw() {
-    glDrawElements(GL_TRIANGLES, this->index_count, GL_UNSIGNED_INT, 0);
-  }
-
-private:
-  GLuint renderer_id;
-  GLuint vbo;
-  GLuint ebo;
-
-  GLenum gl_usage;
-
-  uint32_t index_count;
-};
 
 
 
@@ -106,18 +31,20 @@ struct Camera {
 	float yaw, pitch;
   float fovy, aspect, near, far;
 
-	glm::mat4 get_view_projection() const {
+	glm::mat4 get_view_projection(bool translate) const {
     
-    glm::mat4 rotate = get_rotation();
+    glm::mat4 rotation = get_rotation();
 
-    glm::mat4 translate = glm::translate(glm::identity<glm::mat4>(), position);
+    glm::mat4 translation = glm::mat4(1.0);
+    if (translate)
+      translation = glm::translate(translation, position);
 
     glm::mat4 projection = glm::perspective(this->fovy, this->aspect, this->near, this->far);
-		return projection * glm::inverse(translate * rotate);
+		return projection * glm::inverse(translation * rotation);
 	}
 
   glm::mat4 get_rotation() const {
-     glm::mat4 rotate = glm::rotate(glm::identity<glm::mat4>(), 
+     glm::mat4 rotate = glm::rotate(glm::mat4(1.0), 
       glm::radians<float>(this->yaw), glm::vec3(0.0, 1.0, 0.0)
     );
     return glm::rotate(rotate, glm::radians<float>(this->pitch), glm::vec3(1.0, 0.0, 0.0));
@@ -234,7 +161,35 @@ void main() {
 }
 )";
 
-const char* vertex_shader_code = R"(
+const char* skybox_vs_code = R"(
+#version 410 core
+layout(location = 0) in vec3 a_Pos;
+
+layout(location = 0) out vec3 vs_TexCoord;
+
+uniform mat4 u_ViewProjection;
+
+void main() {
+  vs_TexCoord = a_Pos;
+  vec4 proj_pos = u_ViewProjection * vec4(a_Pos, 1.0);
+  gl_Position = proj_pos.xyww;  
+}
+)";
+
+const char* skybox_fs_code = R"(
+#version 410 core
+out vec4 color;
+
+layout(location = 0) in vec3 vs_TexCoord;
+
+uniform samplerCube cube_map;
+
+void main() {
+  color = texture(cube_map, vs_TexCoord);
+}
+)";
+
+const char* water_vs_code = R"(
 #version 410 core
 layout(location = 0) in vec3 a_Pos;
 layout(location = 1) in vec3 a_Color;
@@ -245,9 +200,8 @@ layout(location = 0) out vec3 vs_Color;
 layout(location = 1) out vec2 vs_UV;
 layout(location = 2) out float vs_Time;
 layout(location = 3) out vec3 vs_Normal;
-layout(location = 4) out vec3 vs_LightDir;
-layout(location = 5) out vec3 vs_CameraDir;
-layout(location = 6) out vec3 vs_Pos;
+layout(location = 4) out vec3 vs_LightSourceDir;
+layout(location = 5) out vec3 vs_Position;
 
 uniform mat4 u_ViewProjection;
 uniform mat4 u_Model;
@@ -255,20 +209,19 @@ uniform float u_Time;
 
 void main()
 {
-  vs_Time = u_Time;
   vs_Color = a_Color;
   vs_UV = a_UV;
-  vs_Normal = (u_Model * vec4(a_Normal, 0.0)).xyz;
-  vs_LightDir = normalize(vec3(0.0, 1.0, 0.0));
-  vs_Pos = a_Pos;
+  vs_Time = u_Time;
+  vs_Normal = normalize(transpose(inverse(mat3(u_Model))) * a_Normal);
+  vs_LightSourceDir = normalize(vec3(0.0, 1.0, 0.0));
 
   vec4 m_Pos = u_Model * vec4(a_Pos, 1.0);
-  vs_CameraDir = normalize(-m_Pos.xyz);
+  vs_Position = m_Pos.xyz;
   gl_Position = u_ViewProjection * m_Pos; 
 }
 )";
 
-const char* fragment_shader_code = R"(
+const char* water_fs_code = R"(
 #version 410 core
 out vec4 color;
 
@@ -276,30 +229,27 @@ layout(location = 0) in vec3 vs_Color;
 layout(location = 1) in vec2 vs_UV;
 layout(location = 2) in float vs_Time;
 layout(location = 3) in vec3 vs_Normal;
-layout(location = 4) in vec3 vs_LightDir;
-layout(location = 5) in vec3 vs_CameraDir;
-layout(location = 6) in vec3 vs_Pos;
+layout(location = 4) in vec3 vs_LightSourceDir;
+layout(location = 5) in vec3 vs_Position;
 
+uniform vec3 u_CameraPos;
 uniform sampler2D texture0;
-//uniform sampler2D texture1;
+uniform samplerCube cube_map;
 
-void main()
-{
+void main() { 
   // Blinn-Phong illumination using half-way vector instead of reflection.
-  vec3 light_color = 0.5 * vec3(1.0, 1.0, 1.0);
-  vec3 halfwayDir = normalize(vs_LightDir + vs_CameraDir);
-  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 10.0);
-  float diffuse = max(dot(vs_Normal, vs_LightDir), 0.0);
+  vec3 cameraDir = u_CameraPos - vs_Position;
+  vec3 halfwayDir = normalize(vs_LightSourceDir + cameraDir);
+  vec3 reflection = reflect(-cameraDir, vs_Normal);
+
+  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 1.0);
+  float diffuse = max(dot(vs_Normal, vs_LightSourceDir), 0.0);
   
-  // Trip mode on.
-  //float height = normalize(vs_Pos).y;
-  //float xx = normalize(vs_Pos).x + (int(vs_Time) % 1000) / 1000.0f * normalize(vs_Pos).z;
-  //vec3 rand_color = vec3(0.8, 0.9, 1.0) - vec3(2.3*sin(height + vs_Time + xx), 13*cos(height + vs_Time - xx), 5*sin(height + vs_Time + xx)); 
-  //color = vec4(diffuse * rand_color + specular * light_color, 1.0);
+  // Intensities
+  vec3 i_sky = texture(cube_map, reflection).xyz;
   
-  vec3 brdf = diffuse * vs_Color + specular * light_color;
+  vec3 brdf = 0.2 * vs_Color * diffuse + i_sky * specular;
   color = vec4(brdf, 1.0);
-  //color = texture(texture0, vs_UV); 
 }
 )";
 
@@ -308,8 +258,8 @@ int main(void)
   Window window;
   Clock clock;
 
-  GLuint shader_program = create_shader_program(vertex_shader_code, fragment_shader_code);
-  glUseProgram(shader_program);
+  GLuint water_shader_program = create_shader_program(water_vs_code, water_fs_code);
+  GLuint skybox_shader_program = create_shader_program(skybox_vs_code, skybox_fs_code);
 
   std::vector<Vertex> square_data = {
     Vertex{glm::vec3(-0.5, 0.0, -0.5), glm::vec3(0.6, 0.6, 0.9), glm::vec3(0.0, 1.0, 0.0), glm::vec2(1.0, 1.0)}, 
@@ -324,7 +274,7 @@ int main(void)
   };
 
   RawModel water(square_data, square_indices, GL_STATIC_DRAW);
-  Texture white_texture;
+  Texture2D white_texture;
   Camera camera = { .position = glm::vec3(0.0, 3.0, 10.0),
 	  .yaw = 0.0, .pitch = 0.0,
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
@@ -333,7 +283,6 @@ int main(void)
   glEnable(GL_CULL_FACE);
 
   glEnable(GL_DEPTH_TEST);
-  glDepthFunc(GL_LESS); 
 
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -341,19 +290,38 @@ int main(void)
   // Wire frame
   //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 
-  GLuint view_proj_loc = glGetUniformLocation(shader_program, "u_ViewProjection");
-  GLuint model_loc = glGetUniformLocation(shader_program, "u_Model");
-  GLuint time_loc = glGetUniformLocation(shader_program, "u_Time");
-  GLuint tex0_loc = glGetUniformLocation(shader_program, "texture0");
-  GLuint tex1_loc  = glGetUniformLocation(shader_program, "texture1");
+  // Skybox Shader Uniforms
+  GLuint skybox_view_proj_loc = glGetUniformLocation(skybox_shader_program, "u_ViewProjection");
+  GLuint skybox_texture_loc = glGetUniformLocation(skybox_shader_program, "cube_map");
+  glUseProgram(skybox_shader_program);
+  glUniform1f(skybox_texture_loc, 0);
 
+  std::vector<const char*> skybox_faces = {
+    "assets/right.jpg",
+    "assets/left.jpg",
+    "assets/top.jpg",
+    "assets/bottom.jpg",
+    "assets/front.jpg",
+    "assets/back.jpg",
+  };
+  Skybox skybox(skybox_faces);
+
+  // Water Shader Uniforms
+  GLuint shader_view_proj_loc = glGetUniformLocation(water_shader_program, "u_ViewProjection");
+  GLuint model_loc = glGetUniformLocation(water_shader_program, "u_Model");
+  GLuint time_loc = glGetUniformLocation(water_shader_program, "u_Time");
+  GLuint camera_pos_loc = glGetUniformLocation(water_shader_program, "u_CameraPos");
+  GLuint tex0_loc = glGetUniformLocation(water_shader_program, "texture0");
+  GLuint shader_cube_map_loc  = glGetUniformLocation(water_shader_program, "cube_map");
+
+  glUseProgram(water_shader_program);
   glUniform1i(tex0_loc, 0);
-  glUniform1i(tex1_loc, 1);
+  glUniform1i(shader_cube_map_loc, 1);
 
   // Wave simulation
   const int N = 256;
   const int Nplus1 = N + 1;
-  double length = 300;
+  double length = 200;
   double two_pi = glm::two_pi<double>();
 
   std::vector<Vertex> vertices(Nplus1 * Nplus1);
@@ -502,36 +470,38 @@ int main(void)
           displacement_image.set_pixel(n, m, color, color, color);
         }
       }
-      Texture displacement_tex(displacement_image);
+      Texture2D displacement_tex(displacement_image);
       displacement_id = displacement_tex.get_texture_id();
     }
 
     glClearColor(0.8, 0.85, 1.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
-    glUseProgram(shader_program);
 
     double time = clock.tick();
     update(window, time, camera);
-    std::cout << 1 / time << " FPS" << std::endl;
+    //std::cout << 1 / time << " FPS" << std::endl;
 
-    glm::mat4 view_projection = camera.get_view_projection();
-    glUniformMatrix4fv(view_proj_loc, 1, false, &view_projection[0][0]);
-
+    /** WAVE RENDERING BEGIN **/
+    glUseProgram(water_shader_program);
+    glm::mat4 wave_view_projection = camera.get_view_projection(true);
+    glUniformMatrix4fv(shader_view_proj_loc, 1, false, &wave_view_projection[0][0]);
     glUniform1f(time_loc, clock.since_start());
-
+    glUniform3f(camera_pos_loc, camera.position.x, camera.position.y, camera.position.z);
 
     //for (int y = 0; y < 10; y++) {
       //for (int x = 0; x < 10; x++) {
-        /**glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(0.0, 0.0, 0.0));
-        water_matrix = glm::rotate(water_matrix, glm::radians<float>(90), glm::vec3(1.0, 0.0, 0.0));
+        /*glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(0.0, 0.0, 0.0));
+        water_matrix = glm::rotate(water_matrix, glm::radians<float>(0), glm::vec3(1.0, 0.0, 0.0));
+        water_matrix = glm::scale(water_matrix, glm::vec3(10.0, 1.0, 10.0));
         glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
         water.bind();
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, displacement_id);
-        water.draw();*/
+        skybox.bind_cube_map(1);
+        water.draw();
+        skybox.unbind_cube_map();*/
       //}
     //}
-
 
     glm::mat4 water_matrix = glm::identity<glm::mat4>();
     water_matrix = glm::rotate(water_matrix, glm::radians<float>(90), glm::vec3(1.0, 0.0, 0.0));
@@ -541,7 +511,8 @@ int main(void)
     water_surface.update_vertex_data(vertices);
 
     water_surface.bind();
-    int num_tiles = 3;
+    skybox.bind_cube_map(1);
+    int num_tiles = 10;
     for (int z = 0; z < num_tiles; z++) {
       for (int x = 0; x < num_tiles; x++) {
         glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), 
@@ -552,6 +523,16 @@ int main(void)
         water_surface.draw();
       }
     }
+
+    /** WAVE RENDERING END **/
+
+    /** SKYBOX RENDERING BEGIN (done last) **/
+    glm::mat4 skybox_view_projection = camera.get_view_projection(false);
+    glUseProgram(skybox_shader_program);
+    glUniformMatrix4fv(skybox_view_proj_loc, 1, false, &skybox_view_projection[0][0]);
+    skybox.draw();
+
+    /** SKYBOX RENDERING END **/
 
     window.swap_buffers ();
     window.poll_events ();
@@ -631,10 +612,6 @@ void update_surface_vertices(uint32_t Nplus1, std::vector<Vertex>& vertices, con
   std::complex<double>* displacement_x, std::complex<double>* displacement_y, std::complex<double>* displacement_z,
   std::complex<double>* gradient_x, std::complex<double>* gradient_z) {
   uint32_t N = Nplus1 - 1;
-  double max_x = std::numeric_limits<double>().min();
-  double min_x = std::numeric_limits<double>().max();
-  double max_z = std::numeric_limits<double>().min();
-  double min_z = std::numeric_limits<double>().max();
   for (uint32_t z = 0; z < Nplus1; z++) {
     for (uint32_t x = 0; x < Nplus1; x++) {
       int i_v = z * Nplus1 + x;
@@ -642,14 +619,6 @@ void update_surface_vertices(uint32_t Nplus1, std::vector<Vertex>& vertices, con
       double lambda = -1.0;
       glm::vec3 displacement(lambda * displacement_x[i_d].real(), displacement_y[i_d].real(), lambda * displacement_z[i_d].real());
       vertices[i_v].position = origin_positions[i_v] + displacement;
-      if (gradient_x[i_d].real() > max_x)
-        max_x = gradient_x[i_d].real();
-      if (gradient_x[i_d].real() < min_x)
-        min_x = gradient_x[i_d].real();
-      if (gradient_z[i_d].real() > max_z)
-        max_z = gradient_z[i_d].real();
-      if (gradient_z[i_d].real() < min_z)
-        min_z = gradient_z[i_d].real();
     }
   }
 
@@ -657,12 +626,10 @@ void update_surface_vertices(uint32_t Nplus1, std::vector<Vertex>& vertices, con
     for (uint32_t x = 0; x < Nplus1; x++) {
       int i_v = z * Nplus1 + x;
       int i_d = (z % N) * N + x % N;
-      max_x = glm::max(abs(max_x), abs(min_x));
-      max_z = glm::max(abs(max_z), abs(min_z));
       vertices[i_v].normal = glm::normalize(glm::vec3(
-        -gradient_x[i_d].real() / max_x, 
+        -gradient_x[i_d].real() * 10, 
         1.0, 
-        gradient_z[i_d].real() / max_z)
+        -gradient_z[i_d].real() * 10)
       );
     }
   }

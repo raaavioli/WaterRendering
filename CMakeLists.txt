@@ -31,6 +31,7 @@ include_directories(
   ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
 )
 
+file(COPY assets DESTINATION ${CMAKE_BINARY_DIR})
 file(GLOB SRCFILES ${CMAKE_SOURCE_DIR}/src/*.cpp)
 
 add_executable(${PROJECT_NAME}
