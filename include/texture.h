@@ -42,7 +42,7 @@ private:
 };
 
 struct TextureCubeMap {
-    TextureCubeMap(std::vector<const char*> filenames);
+    TextureCubeMap(const char* filename, bool folder = false);
 
     inline GLuint get_texture_id() { return this->renderer_id; };
     inline void bind(uint32_t slot) const {
@@ -54,6 +54,23 @@ struct TextureCubeMap {
 
 private:
     GLuint renderer_id;
+
+    /**
+     * Load cube map images from folder within assets/ directory. Folder should contain images named: 
+     *      px, nx, py, ny, pz and nz.
+     * Assuming JPG 
+     * TODO: Look for file extension
+     */
+    void from_folder(const char* foldername);
+
+    /**
+     * Load cube map image from file within assets/ directory. Should contain 6 subimages. 
+     * Image dimensions needs to be 4:3, so that all subimages are square.
+     * Assuming JPG 
+     * TODO: Look for file extension
+     * TODO: Enable more than one format
+     */
+    void from_file(const char* filename);
 };
 
 #endif // WR_TEXTURE_H

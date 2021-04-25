@@ -68,7 +68,9 @@ Texture2D::Texture2D(const char* filename) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     // load and generate the texture
     int width, height, nrChannels;
-    unsigned char *data = stbi_load(filename, &width, &height, &nrChannels, 0);
+
+    std::string filepath = "assets/" + std::string(filename);
+    unsigned char *data = stbi_load(filepath.c_str(), &width, &height, &nrChannels, 4);
     if (data)
     {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
@@ -76,7 +78,7 @@ Texture2D::Texture2D(const char* filename) {
     }
     else
     {
-        std::cout << "Error: Failed to load texture: " << filename << std::endl;
+        std::cout << "Error: Failed to load texture: " << filepath.c_str() << std::endl;
     }
     stbi_image_free(data);
     unbind();
@@ -98,49 +100,123 @@ Texture2D::Texture2D(Image image) {
 }
 
 /**
- * Create a cube map texture
+ * Create a cube map texture from skybox image
  * 
- * @param filenames The file names to sample cube textures from.
- *  Should be ordered in cube map texture target order:
- *      +x, -x, +y, -y, +z, -z
+ * Supports: PNG, JPEG
  */
-TextureCubeMap::TextureCubeMap(std::vector<const char*> filenames) {
+TextureCubeMap::TextureCubeMap(const char* filename, bool folder) {
     glGenTextures(1, &this->renderer_id);
+    if (folder)
+        from_folder(filename);
+    else
+        from_file(filename);
+}
+
+/**
+ * Load images from folder within assets/ directory. Folder should contain images named: 
+ *      px, nx, py, ny, pz and nz.
+ * Assuming JPG 
+ * TODO: Look for file extension
+ */
+void TextureCubeMap::from_folder(const char* foldername) {
     glBindTexture(GL_TEXTURE_CUBE_MAP, this->renderer_id);
     int width = 0;
     int height = 0;
     int channels = 0;
-    for(uint32_t i = 0; i < filenames.size(); i++)
+    std::vector<const char*> files = {"px.jpg", "nx.jpg", "py.jpg", "ny.jpg", "pz.jpg", "nz.jpg"};
+    for(uint32_t i = 0; i < 6; i++)
     {
         int tmp_width = width;
         int tmp_height = height;
         int tmp_channels = channels;
-        u_char *data = stbi_load(filenames[i], &width, &height, &channels, 0);
+        std::string filepath = "assets/" + std::string(foldername) + "/" + std::string(files[i]);
+        u_char *data = stbi_load(filepath.c_str(), &width, &height, &channels, 4);
         if (i > 0 && (width != height || width != tmp_width || height != tmp_height || channels != tmp_channels)) {
             glDeleteTextures(1, &this->renderer_id);
-            std::cout << "Error: Failed to load texture: " << filenames[i] << " (wrong dimensions)" << std::endl;
+            stbi_image_free(data);
+            std::cout << "Error: Failed to load texture: " << filepath.c_str() << " (wrong dimensions)" << std::endl;
             break;
         }
 
-        if (data && channels == 3) {
+        if (data) {
             glTexImage2D(
                 GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 
-                0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data
+                0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data
             );
         }
         else {
-            std::cout << "Error: Failed to load texture: " << filenames[i] << " channels: " << channels << std::endl;
+            std::cout << "Error: Failed to load texture: " << filepath.c_str() << " channels: " << channels << std::endl;
         }
         stbi_image_free(data);
     }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE); 
+    unbind(); 
+}
+
+void TextureCubeMap::from_file(const char* filename) {
+    glBindTexture(GL_TEXTURE_CUBE_MAP, this->renderer_id);
+    int width = 0, height = 0, channels = 0;
+    int req_channels = 4;
+
+    std::string filepath = "assets/" + std::string(filename);
+    u_char *data = stbi_load(filepath.c_str(), &width, &height, &channels, req_channels);
+    if (width / 4.0 != height / 3.0) {
+        glDeleteTextures(1, &this->renderer_id);
+        std::cout << "Error: Failed to load texture: " << filepath.c_str() << " Wrong dimensions: " << width << ", " << height << std::endl;
+        stbi_image_free(data);
+        return;
+    }
+
+    if (data) {
+        /** Divide data into smaller sub-images. Assuming 4 channels per color.
+         * Following shows expected positions of subimages:
+         * XIXX
+         * IIII
+         * XIXX
+         */
+        int dim = width / 4;
+        int sub_dim_x = dim * req_channels;
+        u_char px[dim * sub_dim_x];
+        u_char nx[dim * sub_dim_x];
+        u_char py[dim * sub_dim_x];
+        u_char ny[dim * sub_dim_x];
+        u_char pz[dim * sub_dim_x];
+        u_char nz[dim * sub_dim_x];
+        std::cout << width << ", " << height << ",  " << dim << std::endl;
+        for (int y = 0; y < dim; y++) {
+            for (int x = 0; x < dim * req_channels; x++) {
+                int sub_offset_y = y * sub_dim_x;
+                int full_offset_y = width * req_channels;
+                py[sub_offset_y + x] = data[0 * dim * full_offset_y + y * full_offset_y + (1 * sub_dim_x + x)];
+                nx[sub_offset_y + x] = data[1 * dim * full_offset_y + y * full_offset_y + (0 * sub_dim_x + x)];
+                pz[sub_offset_y + x] = data[1 * dim * full_offset_y + y * full_offset_y + (1 * sub_dim_x + x)];
+                px[sub_offset_y + x] = data[1 * dim * full_offset_y + y * full_offset_y + (2 * sub_dim_x + x)];
+                nz[sub_offset_y + x] = data[1 * dim * full_offset_y + y * full_offset_y + (3 * sub_dim_x + x)];
+                ny[sub_offset_y + x] = data[2 * dim * full_offset_y + y * full_offset_y + (1 * sub_dim_x + x)];
+            }
+        }
+        std::vector<u_char*>sub_images = {px, nx, py, ny, pz, nz};
+        for (int i = 0; i < 6; i++) {
+            // External format GL_RGBA due to stb_load with 4 requested channels.
+            glTexImage2D(
+                GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 
+                0, GL_RGBA, dim, dim, 0, GL_RGBA, GL_UNSIGNED_BYTE, sub_images[i]
+            );
+        }
+    }
+    else {
+        std::cout << "Error: Failed to load texture: " << filename << " channels: " << channels << std::endl;
+    }
+    stbi_image_free(data);
 
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE); 
-
-    glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
-
     unbind(); 
 }

@@ -197,26 +197,29 @@ layout(location = 2) in vec3 a_Normal;
 layout(location = 3) in vec2 a_UV;
 
 layout(location = 0) out vec3 vs_Color;
-layout(location = 1) out vec2 vs_UV;
-layout(location = 2) out float vs_Time;
-layout(location = 3) out vec3 vs_Normal;
-layout(location = 4) out vec3 vs_LightSourceDir;
-layout(location = 5) out vec3 vs_Position;
+layout(location = 1) out float vs_Time;
+layout(location = 2) out vec3 vs_Normal;
+layout(location = 3) out vec3 vs_LightSourceDir;
+layout(location = 4) out vec3 vs_CameraDir;
 
 uniform mat4 u_ViewProjection;
 uniform mat4 u_Model;
 uniform float u_Time;
+uniform vec3 u_CameraPos;
 
 void main()
 {
+  // Constants
+  vec3 lightPos = vec3(20.0, 30.0, -30.0);
+ 
   vs_Color = a_Color;
-  vs_UV = a_UV;
   vs_Time = u_Time;
+
   vs_Normal = normalize(transpose(inverse(mat3(u_Model))) * a_Normal);
-  vs_LightSourceDir = normalize(vec3(0.0, 1.0, 0.0));
 
   vec4 m_Pos = u_Model * vec4(a_Pos, 1.0);
-  vs_Position = m_Pos.xyz;
+  vs_LightSourceDir = normalize(lightPos - m_Pos.xyz);
+  vs_CameraDir = normalize(u_CameraPos - m_Pos.xyz);
   gl_Position = u_ViewProjection * m_Pos; 
 }
 )";
@@ -226,30 +229,54 @@ const char* water_fs_code = R"(
 out vec4 color;
 
 layout(location = 0) in vec3 vs_Color;
-layout(location = 1) in vec2 vs_UV;
-layout(location = 2) in float vs_Time;
-layout(location = 3) in vec3 vs_Normal;
-layout(location = 4) in vec3 vs_LightSourceDir;
-layout(location = 5) in vec3 vs_Position;
+layout(location = 1) in float vs_Time;
+layout(location = 2) in vec3 vs_Normal;
+layout(location = 3) in vec3 vs_LightSourceDir;
+layout(location = 4) in vec3 vs_CameraDir;
 
-uniform vec3 u_CameraPos;
 uniform sampler2D texture0;
 uniform samplerCube cube_map;
 
+// https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel
+// Tessendorf 4.3 - Building a Shader for renderman
+// @param I Incident vector
+// @param N Normal vector
+// @param ior Index of refraction
+float reflectivity(vec3 I, vec3 N, float ior) {
+  float costhetai = abs(dot(normalize(I), normalize(N)));
+  float thetai = acos(costhetai);
+  float sinthetat = sin(thetai) / ior;
+  float thetat = asin(sinthetat);
+  if(thetai == 0.0) {
+    float reflectivity = (ior - 1)/(ior + 1);
+    return reflectivity * reflectivity;
+  } else {
+    float fs = sin(thetat - thetai) / sin(thetat + thetai);
+    float ts = tan(thetat - thetai) / tan(thetat + thetai);
+    return 0.5 * ( fs*fs + ts*ts );
+  } 
+}
+
 void main() { 
   // Blinn-Phong illumination using half-way vector instead of reflection.
-  vec3 cameraDir = u_CameraPos - vs_Position;
-  vec3 halfwayDir = normalize(vs_LightSourceDir + cameraDir);
-  vec3 reflection = reflect(-cameraDir, vs_Normal);
+  float refraction_index = 1.0 / 1.33;
+  vec3 refractionDir = refract(-vs_CameraDir, vs_Normal, refraction_index);
+  vec3 reflectionDir = reflect(-vs_CameraDir, vs_Normal);
+  float reflectivity = reflectivity(vs_CameraDir, vs_Normal, 1.0 / refraction_index);
 
-  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 1.0);
-  float diffuse = max(dot(vs_Normal, vs_LightSourceDir), 0.0);
-  
   // Intensities
-  vec3 i_sky = texture(cube_map, reflection).xyz;
+  vec3 i_reflect = texture(cube_map, reflectionDir).xyz; 
+  vec3 i_refract = vs_Color;
+  if (refractionDir != vec3(0.0)) // If refractionDir is 0-vector, something is wrong. 
+    i_refract = texture(cube_map, refractionDir).xyz;
+
+  vec3 halfwayDir = normalize(vs_LightSourceDir + vs_CameraDir);
+  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 20.0);
   
-  vec3 brdf = 0.2 * vs_Color * diffuse + i_sky * specular;
-  color = vec4(brdf, 1.0);
+  const vec3 light_color = 0.3 * vec3(1.0);
+  
+  vec3 reflection_refraction = reflectivity * i_reflect + (1 - reflectivity) * i_refract;
+  color = vec4(reflection_refraction + light_color * specular, 1.0);
 }
 )";
 
@@ -275,8 +302,8 @@ int main(void)
 
   RawModel water(square_data, square_indices, GL_STATIC_DRAW);
   Texture2D white_texture;
-  Camera camera = { .position = glm::vec3(0.0, 3.0, 10.0),
-	  .yaw = 0.0, .pitch = 0.0,
+  Camera camera = { .position = glm::vec3(0.0, 0.1, 10.0),
+	  .yaw = 15.0, .pitch = 0.0,
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
   };
 
@@ -296,15 +323,13 @@ int main(void)
   glUseProgram(skybox_shader_program);
   glUniform1f(skybox_texture_loc, 0);
 
-  std::vector<const char*> skybox_faces = {
-    "assets/right.jpg",
-    "assets/left.jpg",
-    "assets/top.jpg",
-    "assets/bottom.jpg",
-    "assets/front.jpg",
-    "assets/back.jpg",
-  };
-  Skybox skybox(skybox_faces);
+  // Textures received from: https://www.humus.name/index.php?page=Textures
+  const char* skansen_folder = "skansen";
+  const char* ocean_folder = "ocean";
+  const char* church_folder = "church";
+  Skybox skybox(skansen_folder, true);
+  //Skybox desert_skybox(desert_cubemap_filename);
+  glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
   // Water Shader Uniforms
   GLuint shader_view_proj_loc = glGetUniformLocation(water_shader_program, "u_ViewProjection");
@@ -321,7 +346,7 @@ int main(void)
   // Wave simulation
   const int N = 256;
   const int Nplus1 = N + 1;
-  double length = 200;
+  double length = 300;
   double two_pi = glm::two_pi<double>();
 
   std::vector<Vertex> vertices(Nplus1 * Nplus1);
@@ -334,7 +359,7 @@ int main(void)
       int i0 = z * Nplus1 + x;
       Vertex vertex;
       vertex.position = glm::vec3(-0.5 + x * tile_dim / float(N), 0, -0.5 + z * tile_dim / float(N));
-      vertex.color = glm::vec3(52 / 255.0, 155 / 255.0, 235 / 255.0);
+      vertex.color = glm::vec3(1.0, 0.0, 0.0); //glm::vec3(52 / 255.0, 155 / 255.0, 235 / 255.0);
       vertices[i0] = vertex;
       origin_positions[i0] = vertex.position;
 
@@ -396,6 +421,8 @@ int main(void)
 
   uint32_t displacement_id = 0;
 
+  float simulation_speed = 2.0;
+
   while (!window.should_close ()) {
     // Setup h_tk + device
     for (int m = 0; m < N; m++) {
@@ -404,7 +431,7 @@ int main(void)
         float kx = (n - N / 2.f) * two_pi / length;
         float kz = (m - N / 2.f) * two_pi / length;
         glm::vec2 K(kx, kz);
-        h_tk[i] = h_tilde(h0_tk[i], h0_tmk[i], K, clock.since_start());
+        h_tk[i] = h_tilde(h0_tk[i], h0_tmk[i], K, simulation_speed * clock.since_start());
         dh_k_dx[i] = h_tk[i] * std::complex<double>(0.0, kx);
         dh_k_dz[i] = h_tk[i] * std::complex<double>(0.0, kz);
         double k_length = glm::length(K);
@@ -512,6 +539,7 @@ int main(void)
 
     water_surface.bind();
     skybox.bind_cube_map(1);
+    //desert_skybox.bind_cube_map(1);
     int num_tiles = 10;
     for (int z = 0; z < num_tiles; z++) {
       for (int x = 0; x < num_tiles; x++) {
@@ -531,6 +559,7 @@ int main(void)
     glUseProgram(skybox_shader_program);
     glUniformMatrix4fv(skybox_view_proj_loc, 1, false, &skybox_view_projection[0][0]);
     skybox.draw();
+    //desert_skybox.draw();
 
     /** SKYBOX RENDERING END **/
 
@@ -542,33 +571,37 @@ int main(void)
 
 void update(const Window& window, double dt, Camera& camera) {
   // std::cout << "Frame rate: " << 1.0 / dt << " FPS" << std::endl;
+
+  float rotation_speed = 10.f;
+
   if (window.is_key_pressed(GLFW_KEY_LEFT)) {
-    camera.yaw += 100 * dt;
+    camera.yaw += rotation_speed * dt;
   }
   if (window.is_key_pressed(GLFW_KEY_RIGHT)) {
-    camera.yaw -= 100 * dt;
+    camera.yaw -= rotation_speed * dt;
   }
   if (window.is_key_pressed(GLFW_KEY_UP)) {
-    camera.pitch += 100 * dt;
+    camera.pitch += rotation_speed * dt;
   }
   if (window.is_key_pressed(GLFW_KEY_DOWN)) {
-    camera.pitch -= 100 * dt;
+    camera.pitch -= rotation_speed * dt;
   }
 
   glm::vec3 forward = glm::vec3(camera.get_rotation() * glm::vec4(0.0, 0.0, -1.0, 0.0));
   glm::vec3 right = glm::vec3(camera.get_rotation() * glm::vec4(1.0, 0.0, 0.0, 0.0));
 
+  float movement_speed = 0.5;
   if (window.is_key_pressed(GLFW_KEY_W)) {
-    camera.position += forward * (float) dt;
+    camera.position += forward * (float) (dt * movement_speed);
   }
   if (window.is_key_pressed(GLFW_KEY_S)) {
-    camera.position -= forward * (float) dt;
+    camera.position -= forward * (float) (dt * movement_speed);
   }
   if (window.is_key_pressed(GLFW_KEY_D)) {
-    camera.position += right * (float) dt;
+    camera.position += right * (float) (dt * movement_speed);
   }
   if (window.is_key_pressed(GLFW_KEY_A)) {
-    camera.position -= right * (float) dt;
+    camera.position -= right * (float) (dt * movement_speed);
   }
 }
 
@@ -626,11 +659,12 @@ void update_surface_vertices(uint32_t Nplus1, std::vector<Vertex>& vertices, con
     for (uint32_t x = 0; x < Nplus1; x++) {
       int i_v = z * Nplus1 + x;
       int i_d = (z % N) * N + x % N;
-      vertices[i_v].normal = glm::normalize(glm::vec3(
-        -gradient_x[i_d].real() * 10, 
+      double ex = gradient_x[i_d].real();
+      double ez = gradient_z[i_d].real();
+      vertices[i_v].normal = glm::vec3(
+        -ex * 5.0, 
         1.0, 
-        -gradient_z[i_d].real() * 10)
-      );
+        -ez * 5.0);
     }
   }
 }

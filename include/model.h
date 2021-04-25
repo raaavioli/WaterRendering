@@ -33,13 +33,11 @@ private:
 
 struct Skybox {
     /**
-     * Create a sky box from a list of image names
+     * Create a sky box from a file path or name of cube map image(s).
      * 
-     * @param filenames The file names to sample cube textures from.
-     *  Should be ordered in cube map texture target order:
-     *      +x, -x, +y, -y, +z, -z
+     * @param filename file name of sky box texture, image has to have 4:3 width:height ratio..
      */
-    Skybox(const std::vector<const char*> filenames);
+    Skybox(const char* filename, bool folder = false);
 
     /**
      * Draw a skybox, assumes appropriate shader is used
@@ -53,6 +51,8 @@ private:
     TextureCubeMap cube_map;
     GLuint renderer_id, vbo, ebo;
     const uint32_t index_count = 36;
+
+    void init();
 };
 
 #endif //WR_MODEL_H

@@ -43,8 +43,23 @@ void RawModel::update_vertex_data(const std::vector<Vertex>& vertices) {
     }
 }
 
-Skybox::Skybox(const std::vector<const char*> filenames) : cube_map(TextureCubeMap(filenames)) {
-   std::vector<float> vertices = {
+
+Skybox::Skybox(const char* filename, bool folder) : cube_map(TextureCubeMap(filename, folder)){
+    init();
+}
+
+void Skybox::draw() {
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
+    glBindVertexArray(this->renderer_id);
+    cube_map.bind(0);
+    glDrawElements(GL_TRIANGLES, this->index_count, GL_UNSIGNED_INT, 0);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+}
+
+void Skybox::init() {
+       std::vector<float> vertices = {
         -0.5f, -0.5f, -0.5f,
         0.5f, -0.5f, -0.5f,
         0.5f, 0.5f, -0.5f,
@@ -86,15 +101,4 @@ Skybox::Skybox(const std::vector<const char*> filenames) : cube_map(TextureCubeM
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*) 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this->ebo);
     glBindVertexArray(0);
-}
-
-
-void Skybox::draw() {
-    glDepthMask(GL_FALSE);
-    glDepthFunc(GL_LEQUAL);
-    glBindVertexArray(this->renderer_id);
-    cube_map.bind(0);
-    glDrawElements(GL_TRIANGLES, this->index_count, GL_UNSIGNED_INT, 0);
-    glDepthFunc(GL_LESS);
-    glDepthMask(GL_TRUE);
 }
