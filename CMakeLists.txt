@@ -28,14 +28,22 @@ add_subdirectory(glad)
 include_directories(
   ${GLFW_INCLUDE_DIRS}
   ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/imgui
   ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
 )
 
 file(COPY assets DESTINATION ${CMAKE_BINARY_DIR})
 file(GLOB SRCFILES ${CMAKE_SOURCE_DIR}/src/*.cpp)
+file(GLOB IMGUI 
+  ${CMAKE_SOURCE_DIR}/imgui/*.cpp 
+  ${CMAKE_SOURCE_DIR}/imgui/backends/imgui_impl_opengl3.cpp 
+  ${CMAKE_SOURCE_DIR}/imgui/backends/imgui_impl_glfw.cpp
+)
+
 
 add_executable(${PROJECT_NAME}
   ${SRCFILES}
+  ${IMGUI}
 )
 
 target_link_libraries(${PROJECT_NAME} glm glfw glad cuda ${CUDA_cufft_LIBRARY} ${CUDA_LIBRARIES})

@@ -3,13 +3,17 @@
 
 #define GL_SILENCE_DEPRECATION
 
-// CUDA
+// External
 #include <cuda_runtime_api.h>
 #include <cuda.h>
 #include <cufft.h>
 
 #define CUDA_ASSERT(err) if(err != cudaSuccess) std::cout << "Cuda Error: " << err << ", Line: " << __LINE__ << std::endl;
 #define CUFFT_ASSERT(err) if(err != CUFFT_SUCCESS) std::cout << "Cufft Error: " << err << ", Line: " << __LINE__ << std::endl;
+
+#include "imgui.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_opengl3.h"
 
 // GL
 #include <glad/glad.h>
@@ -22,34 +26,7 @@
 #include "texture.h"
 #include "framebuffer.h"
 #include "model.h"
-
-
-
-
-struct Camera {
-	glm::vec3 position;
-	float yaw, pitch;
-  float fovy, aspect, near, far;
-
-	glm::mat4 get_view_projection(bool translate) const {
-    
-    glm::mat4 rotation = get_rotation();
-
-    glm::mat4 translation = glm::mat4(1.0);
-    if (translate)
-      translation = glm::translate(translation, position);
-
-    glm::mat4 projection = glm::perspective(this->fovy, this->aspect, this->near, this->far);
-		return projection * glm::inverse(translation * rotation);
-	}
-
-  glm::mat4 get_rotation() const {
-     glm::mat4 rotate = glm::rotate(glm::mat4(1.0), 
-      glm::radians<float>(this->yaw), glm::vec3(0.0, 1.0, 0.0)
-    );
-    return glm::rotate(rotate, glm::radians<float>(this->pitch), glm::vec3(1.0, 0.0, 0.0));
-  }
-};
+#include "camera.h"
 
 struct Clock {
 public:
@@ -87,13 +64,13 @@ public:
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // To make MacOS happy; should not be needed
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); // We don't want the old OpenGL 
 
-    window = glfwCreateWindow(1260, 1080, "Water rendering", NULL, NULL);
-    if (!window) {
+    this->window = glfwCreateWindow(1260, 1080, "Water rendering", NULL, NULL);
+    if (!this->window) {
       glfwTerminate();
       std::cout << "Could not create glfw window" << std::endl;
       exit(EXIT_FAILURE);
     }
-    glfwMakeContextCurrent(window);
+    glfwMakeContextCurrent(this->window);
 
     if (!gladLoadGLLoader((GLADloadproc) glfwGetProcAddress)) {
       /* Problem: glewInit failed, something is seriously wrong. */
@@ -108,16 +85,16 @@ public:
     glfwTerminate();
   }
 
-  bool should_close () {
-    return glfwWindowShouldClose(window);
-  }
+  inline bool should_close() { return glfwWindowShouldClose(this->window); }
+  inline void poll_events() { glfwPollEvents();}
+  inline void swap_buffers() { glfwSwapBuffers(this->window);}
+  inline GLFWwindow* get_native_window() { return this->window; }
 
-  void poll_events () {
-    glfwPollEvents();
-  }
-
-  void swap_buffers () {
-    glfwSwapBuffers(window);
+  void resize(Camera& camera) {
+    int display_w, display_h;
+    glfwGetFramebufferSize(window, &display_w, &display_h);
+    camera.set_aspect(display_w / (float) display_h);
+    glViewport(0, 0, display_w, display_h);
   }
 
   bool is_key_pressed(int keycode) const {
@@ -283,6 +260,15 @@ void main() {
 int main(void)
 {
   Window window;
+
+  /** ImGui setup begin */
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGui_ImplGlfw_InitForOpenGL(window.get_native_window(), true);
+  /** TODO: Remove hard coded glsl version */
+  ImGui_ImplOpenGL3_Init("#version 330");
+  /** ImGui setup end */
+
   Clock clock;
 
   GLuint water_shader_program = create_shader_program(water_vs_code, water_fs_code);
@@ -302,15 +288,15 @@ int main(void)
 
   RawModel water(square_data, square_indices, GL_STATIC_DRAW);
   Texture2D white_texture;
-  Camera camera = { .position = glm::vec3(0.0, 0.1, 10.0),
-	  .yaw = 15.0, .pitch = 0.0,
-    .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
-  };
+  float movement_speed = 1.0;
+  float rotation_speed = 30.0;
+  Camera camera(glm::vec3(0.0, 1.0, 10.0),
+    0.0, 0.0, 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0, 
+    rotation_speed, movement_speed
+  );
 
-  //glEnable(GL_CULL_FACE);
-
+  glEnable(GL_CULL_FACE);
   glEnable(GL_DEPTH_TEST);
-
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -422,6 +408,10 @@ int main(void)
   uint32_t displacement_id = 0;
 
   float simulation_speed = 2.0;
+  int num_tiles = 10;
+
+  bool draw_skybox = true;
+  bool bind_skybox_cubemap = true;
 
   while (!window.should_close ()) {
     // Setup h_tk + device
@@ -506,29 +496,14 @@ int main(void)
 
     double time = clock.tick();
     update(window, time, camera);
-    //std::cout << 1 / time << " FPS" << std::endl;
 
     /** WAVE RENDERING BEGIN **/
     glUseProgram(water_shader_program);
     glm::mat4 wave_view_projection = camera.get_view_projection(true);
     glUniformMatrix4fv(shader_view_proj_loc, 1, false, &wave_view_projection[0][0]);
     glUniform1f(time_loc, clock.since_start());
-    glUniform3f(camera_pos_loc, camera.position.x, camera.position.y, camera.position.z);
-
-    //for (int y = 0; y < 10; y++) {
-      //for (int x = 0; x < 10; x++) {
-        /*glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(0.0, 0.0, 0.0));
-        water_matrix = glm::rotate(water_matrix, glm::radians<float>(0), glm::vec3(1.0, 0.0, 0.0));
-        water_matrix = glm::scale(water_matrix, glm::vec3(10.0, 1.0, 10.0));
-        glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
-        water.bind();
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, displacement_id);
-        skybox.bind_cube_map(1);
-        water.draw();
-        skybox.unbind_cube_map();*/
-      //}
-    //}
+    glm::vec3 camera_position = camera.get_position();
+    glUniform3f(camera_pos_loc, camera_position.x, camera_position.y, camera_position.z);
 
     glm::mat4 water_matrix = glm::identity<glm::mat4>();
     water_matrix = glm::rotate(water_matrix, glm::radians<float>(90), glm::vec3(1.0, 0.0, 0.0));
@@ -538,9 +513,9 @@ int main(void)
     water_surface.update_vertex_data(vertices);
 
     water_surface.bind();
-    skybox.bind_cube_map(1);
+    if (bind_skybox_cubemap)
+      skybox.bind_cube_map(1);
     //desert_skybox.bind_cube_map(1);
-    int num_tiles = 10;
     for (int z = 0; z < num_tiles; z++) {
       for (int x = 0; x < num_tiles; x++) {
         glm::mat4 water_matrix = glm::translate(glm::identity<glm::mat4>(), 
@@ -551,58 +526,85 @@ int main(void)
         water_surface.draw();
       }
     }
+    if (bind_skybox_cubemap)
+      skybox.unbind_cube_map();
 
     /** WAVE RENDERING END **/
 
     /** SKYBOX RENDERING BEGIN (done last) **/
-    glm::mat4 skybox_view_projection = camera.get_view_projection(false);
-    glUseProgram(skybox_shader_program);
-    glUniformMatrix4fv(skybox_view_proj_loc, 1, false, &skybox_view_projection[0][0]);
-    skybox.draw();
+    if (draw_skybox) {
+      glm::mat4 skybox_view_projection = camera.get_view_projection(false);
+      glUseProgram(skybox_shader_program);
+      glUniformMatrix4fv(skybox_view_proj_loc, 1, false, &skybox_view_projection[0][0]);
+      skybox.draw();
+    }
     //desert_skybox.draw();
 
     /** SKYBOX RENDERING END **/
 
+    /** GUI RENDERING BEGIN **/
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    ImGui::Begin("Settings panel");
+    ImGui::Text("FPS: %f", (1 / time));
+    ImGui::Text("Simulation");
+    ImGui::Dummy(ImVec2(0.0, 5.0));
+    ImGui::SliderFloat("Simulation speed", &simulation_speed, 0.0, 10.0);
+    ImGui::SliderInt("Num tiles", &num_tiles, 1, 20);
+    ImGui::Dummy(ImVec2(0.0, 15.0));
+
+    ImGui::Text("Wave");
+    ImGui::Dummy(ImVec2(0.0, 5.0));
+
+    ImGui::Dummy(ImVec2(0.0, 15.0));
+
+    ImGui::Text("Environment");
+    ImGui::Dummy(ImVec2(0.0, 5.0));
+    ImGui::Checkbox("Skybox", &draw_skybox);
+    ImGui::Checkbox("Cubemap", &bind_skybox_cubemap);
+    ImGui::Dummy(ImVec2(0.0, 15.0));
+
+    ImGui::Text("Camera");
+    ImGui::Dummy(ImVec2(0.0, 5.0));
+    ImGui::SliderFloat("Movement speed", &movement_speed, 1.0, 10.0);
+    ImGui::SliderFloat("Rotation speed", &rotation_speed, 1.0, 200.0);
+    ImGui::Dummy(ImVec2(0.0, 15.0));
+    ImGui::End();
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    /** GUI RENDERING END **/
+
+    camera.set_movement_speed(movement_speed);
+    camera.set_rotation_speed(rotation_speed);
+
+    window.resize(camera);
     window.swap_buffers ();
     window.poll_events ();
   }
+
+  ImGui_ImplOpenGL3_Shutdown();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui::DestroyContext();
+
   return 0;
 }
 
 void update(const Window& window, double dt, Camera& camera) {
   // std::cout << "Frame rate: " << 1.0 / dt << " FPS" << std::endl;
 
-  float rotation_speed = 10.f;
+  if (window.is_key_pressed(GLFW_KEY_LEFT)) camera.rotate_yaw(dt);
+  if (window.is_key_pressed(GLFW_KEY_RIGHT)) camera.rotate_yaw(-dt);
+  if (window.is_key_pressed(GLFW_KEY_UP)) camera.rotate_pitch(dt);
+  if (window.is_key_pressed(GLFW_KEY_DOWN)) camera.rotate_pitch(-dt);
 
-  if (window.is_key_pressed(GLFW_KEY_LEFT)) {
-    camera.yaw += rotation_speed * dt;
-  }
-  if (window.is_key_pressed(GLFW_KEY_RIGHT)) {
-    camera.yaw -= rotation_speed * dt;
-  }
-  if (window.is_key_pressed(GLFW_KEY_UP)) {
-    camera.pitch += rotation_speed * dt;
-  }
-  if (window.is_key_pressed(GLFW_KEY_DOWN)) {
-    camera.pitch -= rotation_speed * dt;
-  }
-
-  glm::vec3 forward = glm::vec3(camera.get_rotation() * glm::vec4(0.0, 0.0, -1.0, 0.0));
-  glm::vec3 right = glm::vec3(camera.get_rotation() * glm::vec4(1.0, 0.0, 0.0, 0.0));
-
-  float movement_speed = 0.5;
-  if (window.is_key_pressed(GLFW_KEY_W)) {
-    camera.position += forward * (float) (dt * movement_speed);
-  }
-  if (window.is_key_pressed(GLFW_KEY_S)) {
-    camera.position -= forward * (float) (dt * movement_speed);
-  }
-  if (window.is_key_pressed(GLFW_KEY_D)) {
-    camera.position += right * (float) (dt * movement_speed);
-  }
-  if (window.is_key_pressed(GLFW_KEY_A)) {
-    camera.position -= right * (float) (dt * movement_speed);
-  }
+  int direction = 0;
+  if (window.is_key_pressed(GLFW_KEY_W)) direction |= Camera::FORWARD;
+  if (window.is_key_pressed(GLFW_KEY_S)) direction |= Camera::BACKWARD;
+  if (window.is_key_pressed(GLFW_KEY_D)) direction |= Camera::RIGHT;
+  if (window.is_key_pressed(GLFW_KEY_A)) direction |= Camera::LEFT;
+  camera.move(dt, direction);
 }
 
 GLuint create_shader_program(const char* vs_code, const char* fs_code) {
