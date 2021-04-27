@@ -271,9 +271,9 @@ void main() {
     i_refract = texture(cube_map, refractionDir).xyz;
 
   vec3 halfwayDir = normalize(vs_LightSourceDir + vs_CameraDir);
-  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 20.0);
+  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 10.0);
   
-  const vec3 light_color = 0.3 * vec3(1.0);
+  const vec3 light_color = 0.4 * vec3(1.0);
   
   vec3 reflection_refraction = reflectivity * i_reflect + (1 - reflectivity) * i_refract;
   color = vec4(reflection_refraction + light_color * specular, 1.0);
@@ -307,7 +307,7 @@ int main(void)
     .fovy = 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0
   };
 
-  glEnable(GL_CULL_FACE);
+  //glEnable(GL_CULL_FACE);
 
   glEnable(GL_DEPTH_TEST);
 

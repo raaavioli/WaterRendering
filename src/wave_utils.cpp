@@ -16,8 +16,8 @@ const double g = 9.82;
 */
 double phillips(const glm::vec2& k) {
     // Constants TODO: Move to alterable place
-    double amplitude = 5.f;
-    double wind_speed = 31.f;
+    double amplitude = 4.f;
+    double wind_speed = 15.f;
     glm::vec2 wind_dir(1.0, 0.0);
 
     double L = wind_speed * wind_speed / g;

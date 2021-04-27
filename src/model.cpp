@@ -59,7 +59,7 @@ void Skybox::draw() {
 }
 
 void Skybox::init() {
-       std::vector<float> vertices = {
+    std::vector<float> vertices = {
         -0.5f, -0.5f, -0.5f,
         0.5f, -0.5f, -0.5f,
         0.5f, 0.5f, -0.5f,
