@@ -5,6 +5,8 @@ The project uses CUDA ([cuFFT](https://developer.nvidia.com/cufft)) to accelerat
 
 ![Example scene](/images/short.gif)
 
+*Example scene rendered using the application*
+
 ## Dependencies
 Following dependencies are required to run the application.
 
