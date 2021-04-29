@@ -35,7 +35,10 @@ include_directories(
 file(COPY assets DESTINATION ${CMAKE_BINARY_DIR})
 file(GLOB SRCFILES ${CMAKE_SOURCE_DIR}/src/*.cpp)
 file(GLOB IMGUI 
-  ${CMAKE_SOURCE_DIR}/imgui/*.cpp 
+  ${CMAKE_SOURCE_DIR}/imgui/imgui.cpp 
+  ${CMAKE_SOURCE_DIR}/imgui/imgui_draw.cpp
+  ${CMAKE_SOURCE_DIR}/imgui/imgui_tables.cpp
+  ${CMAKE_SOURCE_DIR}/imgui/imgui_widgets.cpp
   ${CMAKE_SOURCE_DIR}/imgui/backends/imgui_impl_opengl3.cpp 
   ${CMAKE_SOURCE_DIR}/imgui/backends/imgui_impl_glfw.cpp
 )

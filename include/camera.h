@@ -25,7 +25,7 @@ struct Camera {
     glm::mat4 get_rotation() const;
     void move(float dt, int dir);
 
-    inline glm::vec3 get_position() { return this->position; } 
+    inline glm::vec3 get_position() const { return this->position; } 
     inline void set_aspect(float aspect) { this->aspect = aspect; }
     inline void rotate_yaw(float dt) { this->yaw += dt * rotation_speed; }
     inline void rotate_pitch(float dt) { this->pitch += dt * rotation_speed; }
