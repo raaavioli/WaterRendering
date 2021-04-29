@@ -291,13 +291,18 @@ int main(void)
   bool draw_skybox = true;
   bool bind_skybox_cubemap = true;
 
+  int n = 0;
+  std::vector<double> times(100);
   while (!window.should_close ()) {
     glClearColor(0.8, 0.85, 1.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
 
     double dt = clock.tick();
     update(window, dt, camera);
+    double start = clock.since_start();
     ocean.update(dt);
+    times[n % 100] = (clock.since_start() - start) * 1000;
+    n++;
 
     ocean.draw(water_shader_program, camera);
 
@@ -310,12 +315,17 @@ int main(void)
     }
     /** SKYBOX RENDERING END **/
 
+    double sum = 0.0;
+    for (double t : times)
+      sum += t;
+
     /** GUI RENDERING BEGIN **/
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     ImGui::Begin("Settings panel");
     ImGui::Text("FPS: %f", (1 / dt));
+    ImGui::Text("Update-time: %f (ms)", (sum / 100.0));
     ImGui::Text("Simulation");
     ImGui::Dummy(ImVec2(0.0, 5.0));
     //ImGui::SliderFloat("Simulation speed", &simulation_speed, 0.0, 10.0);

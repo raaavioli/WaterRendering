@@ -7,7 +7,9 @@
 #include <cuda.h>
 #include <cufft.h>
 
-#define CUDA_ASSERT(err) if(err != cudaSuccess) std::cout << "Cuda Error: " << err << ", Line: " << __LINE__ << std::endl;
+#define CUDA_ASSERT(err) if(err != cudaSuccess) std::cout \
+    << "Cuda Error: " << err << ", Line: " << __LINE__ << ", " \
+    << cudaGetErrorString(err) << std::endl;
 #define CUFFT_ASSERT(err) if(err != CUFFT_SUCCESS) std::cout << "Cufft Error: " << err << ", Line: " << __LINE__ << std::endl;
 
 #include <glm/glm.hpp>
@@ -47,15 +49,24 @@ private:
 
     std::vector<Vertex> vertices;
 
+    // Memory
+
+    // Base allocation for host data
+    std::complex<double>* allocation_host;
+
+    // Pointers into allocation_host
     std::complex<double>* h0_tk; // h0_tilde(k)
     std::complex<double>* h0_tmk; // h0_tilde(-k)
-
     std::complex<double>* displacement_y; // h~(k, x, t) -> h(k, x, t)
     std::complex<double>* displacement_x; // x-displacement of h(k, x, t)
     std::complex<double>* displacement_z; // z-displacement of h(k, x, t)
     std::complex<double>* gradient_x; // x-gradient of h(k, x, t)
     std::complex<double>* gradient_z; // z-gradient of h(k, x, t)
 
+    // Base allocation for device data
+    cufftDoubleComplex* allocation_device;
+
+    // Pointers into allocation_device
     cufftDoubleComplex* displacement_y_device;
     cufftDoubleComplex* displacement_x_device;
     cufftDoubleComplex* displacement_z_device;

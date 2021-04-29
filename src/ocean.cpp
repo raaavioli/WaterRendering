@@ -88,46 +88,42 @@ Ocean::Ocean(int N, Skybox skybox) : N(N), Nplus1(N + 1), skybox(skybox), vertic
         }
     }
 
-  surface_model = RawModel(vertices, indices, GL_DYNAMIC_DRAW);
+    surface_model = RawModel(vertices, indices, GL_DYNAMIC_DRAW);
 
-  h0_tk = new std::complex<double>[N * N]; // h0_tilde(k)
-  h0_tmk = new std::complex<double>[N * N]; // h0_tilde(-k)
+    allocation_host = new std::complex<double>[7 * N * N];
+    h0_tk = allocation_host + 0 * N * N; // h0_tilde(k)
+    h0_tmk = allocation_host + 1 * N * N; // h0_tilde(-k)
 
-  for (int m = 0; m < N; m++) {
-    for (int n = 0; n < N; n++) {
-      int i = m * N + n;
-      float kx = (n - N / 2.f) * two_pi / length;
-      float kz = (m - N / 2.f) * two_pi / length;
-      glm::vec2 k(kx, kz);
-      h0_tk[i] = h0_tilde(k);
-      h0_tmk[i] = h0_tilde(-k);
+    for (int m = 0; m < N; m++) {
+        for (int n = 0; n < N; n++) {
+            int i = m * N + n;
+            float kx = (n - N / 2.f) * two_pi / length;
+            float kz = (m - N / 2.f) * two_pi / length;
+            glm::vec2 k(kx, kz);
+            h0_tk[i] = h0_tilde(k);
+            h0_tmk[i] = h0_tilde(-k);
+        }
     }
-  }
 
-  displacement_y = new std::complex<double>[N * N]; // h(k, x, t)
-  displacement_x = new std::complex<double>[N * N]; // x-displacement of h(k, x, t)
-  displacement_z = new std::complex<double>[N * N]; // z-displacement of h(k, x, t)
-  gradient_x = new std::complex<double>[N * N]; // x-gradient of h(k, x, t)
-  gradient_z = new std::complex<double>[N * N]; // z-gradient of h(k, x, t)
+    displacement_y = allocation_host + 2 * N * N; // h(k, x, t)
+    displacement_x = allocation_host + 3 * N * N; // x-displacement of h(k, x, t)
+    displacement_z = allocation_host + 4 * N * N; // z-displacement of h(k, x, t)
+    gradient_x = allocation_host + 5 * N * N; // x-gradient of h(k, x, t)
+    gradient_z = allocation_host + 6 * N * N; // z-gradient of h(k, x, t)
 
-  CUDA_ASSERT(cudaMalloc ((void**) &displacement_y_device, sizeof(std::complex<double>) * N * N));
-  CUDA_ASSERT(cudaMalloc ((void**) &displacement_x_device, sizeof(std::complex<double>) * N * N));
-  CUDA_ASSERT(cudaMalloc ((void**) &displacement_z_device, sizeof(std::complex<double>) * N * N));
-  CUDA_ASSERT(cudaMalloc ((void**) &gradient_x_device, sizeof(std::complex<double>) * N * N));
-  CUDA_ASSERT(cudaMalloc ((void**) &gradient_z_device, sizeof(std::complex<double>) * N * N));
+    CUDA_ASSERT(cudaMalloc ((void**) &allocation_device, 5 * sizeof(std::complex<double>) * N * N));
+    displacement_y_device = allocation_device + 0 * N * N;
+    displacement_x_device = allocation_device + 1 * N * N;
+    displacement_z_device = allocation_device + 2 * N * N;
+    gradient_x_device = allocation_device + 3 * N * N;
+    gradient_z_device = allocation_device + 4 * N * N;
 
-  CUFFT_ASSERT(cufftPlan2d(&plan, N, N, CUFFT_Z2Z));
+    CUFFT_ASSERT(cufftPlan2d(&plan, N, N, CUFFT_Z2Z));
 }
 
 Ocean::~Ocean() {
-    delete[] h0_tk; // h0_tilde(k)
-    delete[] h0_tmk; // h0_tilde(-k)
-
-    delete[] displacement_y; // h(k, x, t)
-    delete[] displacement_x; // x-displacement of h(k, x, t)
-    delete[] displacement_z; // z-displacement of h(k, x, t)
-    delete[] gradient_x; // x-gradient of h(k, x, t)
-    delete[] gradient_z; // z-gradient of h(k, x, t)
+    delete[] allocation_host;
+    CUDA_ASSERT(cudaFree(allocation_device));
 }
 
 void Ocean::update(double dt) {
@@ -153,11 +149,8 @@ void Ocean::update(double dt) {
       }
     }
 
-    CUDA_ASSERT(cudaMemcpy(displacement_y_device, displacement_y, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
-    CUDA_ASSERT(cudaMemcpy(displacement_x_device, displacement_x, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
-    CUDA_ASSERT(cudaMemcpy(displacement_z_device, displacement_z, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
-    CUDA_ASSERT(cudaMemcpy(gradient_x_device, gradient_x, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
-    CUDA_ASSERT(cudaMemcpy(gradient_z_device, gradient_z, sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
+    // Copy displacement_y, displacement_x, displacement_z, gradient_x, gradient_z simultaneously to device
+    CUDA_ASSERT(cudaMemcpy(displacement_y_device, displacement_y, 5 * sizeof(std::complex<double>) * N * N, cudaMemcpyHostToDevice));
     // In place transforms
     // Inverse FFT: h(k, x, t) = sum(h_tilde(k, x, t) * e^(2pikn / N))
     CUFFT_ASSERT(cufftExecZ2Z(plan, displacement_y_device, displacement_y_device, CUFFT_INVERSE)); 
@@ -166,11 +159,8 @@ void Ocean::update(double dt) {
     CUFFT_ASSERT(cufftExecZ2Z(plan, gradient_x_device, gradient_x_device, CUFFT_INVERSE)); 
     CUFFT_ASSERT(cufftExecZ2Z(plan, gradient_z_device, gradient_z_device, CUFFT_INVERSE)); 
 
-    CUDA_ASSERT(cudaMemcpy(displacement_y, displacement_y_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
-    CUDA_ASSERT(cudaMemcpy(displacement_x, displacement_x_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
-    CUDA_ASSERT(cudaMemcpy(displacement_z, displacement_z_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
-    CUDA_ASSERT(cudaMemcpy(gradient_x, gradient_x_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
-    CUDA_ASSERT(cudaMemcpy(gradient_z, gradient_z_device, sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
+    // Copy displacement_y, displacement_x, displacement_z, gradient_x, gradient_z simultaneously from device
+    CUDA_ASSERT(cudaMemcpy(displacement_y, displacement_y_device, 5 * sizeof(std::complex<double>) * N * N, cudaMemcpyDeviceToHost));
 
     for (int m = 0; m < N; m++) {
       for (int n = 0; n < N; n++) {
