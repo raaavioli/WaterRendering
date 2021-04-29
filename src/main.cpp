@@ -141,14 +141,12 @@ layout(location = 2) in vec3 a_Normal;
 layout(location = 3) in vec2 a_UV;
 
 layout(location = 0) out vec3 vs_Color;
-layout(location = 1) out float vs_Time;
-layout(location = 2) out vec3 vs_Normal;
-layout(location = 3) out vec3 vs_LightSourceDir;
-layout(location = 4) out vec3 vs_CameraDir;
+layout(location = 1) out vec3 vs_Normal;
+layout(location = 2) out vec3 vs_LightSourceDir;
+layout(location = 3) out vec3 vs_CameraDir;
 
 uniform mat4 u_ViewProjection;
 uniform mat4 u_Model;
-uniform float u_Time;
 uniform vec3 u_CameraPos;
 
 void main()
@@ -157,7 +155,6 @@ void main()
   vec3 lightPos = vec3(20.0, 30.0, -30.0);
  
   vs_Color = a_Color;
-  vs_Time = u_Time;
 
   vs_Normal = normalize(transpose(inverse(mat3(u_Model))) * a_Normal);
 
@@ -173,10 +170,9 @@ const char* water_fs_code = R"(
 out vec4 color;
 
 layout(location = 0) in vec3 vs_Color;
-layout(location = 1) in float vs_Time;
-layout(location = 2) in vec3 vs_Normal;
-layout(location = 3) in vec3 vs_LightSourceDir;
-layout(location = 4) in vec3 vs_CameraDir;
+layout(location = 1) in vec3 vs_Normal;
+layout(location = 2) in vec3 vs_LightSourceDir;
+layout(location = 3) in vec3 vs_CameraDir;
 
 uniform sampler2D texture0;
 uniform samplerCube cube_map;
@@ -215,9 +211,9 @@ void main() {
     i_refract = texture(cube_map, refractionDir).xyz;
 
   vec3 halfwayDir = normalize(vs_LightSourceDir + vs_CameraDir);
-  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 10.0);
+  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 20.0);
   
-  const vec3 light_color = 0.4 * vec3(1.0);
+  const vec3 light_color = 0.4 * normalize(vec3(253, 251, 211));
   
   vec3 reflection_refraction = reflectivity * i_reflect + (1 - reflectivity) * i_refract;
   color = vec4(reflection_refraction + light_color * specular, 1.0);
@@ -226,7 +222,7 @@ void main() {
 
 int main(void)
 {
-  Window window(1260, 1080);
+  Window window(2000, 1300);
   Clock clock;
 
   /** ImGui setup begin */
@@ -240,21 +236,6 @@ int main(void)
 
   GLuint water_shader_program = create_shader_program(water_vs_code, water_fs_code);
   GLuint skybox_shader_program = create_shader_program(skybox_vs_code, skybox_fs_code);
-
-  /** For rendering a flat water surface
-  std::vector<Vertex> square_data = {
-    Vertex{glm::vec3(-0.5, 0.0, -0.5), glm::vec3(0.6, 0.6, 0.9), glm::vec3(0.0, 1.0, 0.0), glm::vec2(1.0, 1.0)}, 
-    Vertex{glm::vec3(0.5, 0, -0.5), glm::vec3(0.6, 0.6, 0.9), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 1.0)},
-    Vertex{glm::vec3(-0.5, 0, 0.5), glm::vec3(0.6, 0.6, 0.9), glm::vec3(0.0, 1.0, 0.0), glm::vec2(1.0, 0.0)},  
-    Vertex{glm::vec3(0.5,  0, 0.5), glm::vec3(0.6, 0.6, 0.9), glm::vec3(0.0, 1.0, 0.0), glm::vec2(0.0, 0.0)},
-  };
-
-  std::vector<uint32_t> square_indices = {
-    1, 0, 2, 
-    2, 3, 1
-  };
-  RawModel water(square_data, square_indices, GL_STATIC_DRAW);
-  */
 
   Texture2D white_texture;
   float movement_speed = 1.0;
@@ -279,14 +260,13 @@ int main(void)
   glUniform1f(skybox_texture_loc, 0);
 
   // Textures received from: https://www.humus.name/index.php?page=Textures
-  const char* skansen_folder = "skansen";
-  const char* ocean_folder = "ocean";
-  const char* church_folder = "church";
-  Skybox skybox(skansen_folder, true);
-  //Skybox desert_skybox(desert_cubemap_filename);
-  glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+  const char* skyboxes_names[] = { "skansen", "ocean", "church"};
+  static int current_skybox_idx = 0;
+  const char* skybox_combo_label = skyboxes_names[current_skybox_idx];
+  Skybox skyboxes[] = {Skybox(skyboxes_names[0], true), Skybox(skyboxes_names[1], true), Skybox(skyboxes_names[2], true)};
 
-  Ocean ocean(200, skybox);
+  glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+  Ocean ocean(200);
 
   bool draw_skybox = true;
   bool bind_skybox_cubemap = true;
@@ -304,14 +284,14 @@ int main(void)
     times[n % 100] = (clock.since_start() - start) * 1000;
     n++;
 
-    ocean.draw(water_shader_program, camera);
+    ocean.draw(water_shader_program, skyboxes[current_skybox_idx], camera);
 
     /** SKYBOX RENDERING BEGIN (done last) **/
     if (draw_skybox) {
       glm::mat4 skybox_view_projection = camera.get_view_projection(false);
       glUseProgram(skybox_shader_program);
       glUniformMatrix4fv(skybox_view_proj_loc, 1, false, &skybox_view_projection[0][0]);
-      skybox.draw();
+      skyboxes[current_skybox_idx].draw();
     }
     /** SKYBOX RENDERING END **/
 
@@ -339,7 +319,23 @@ int main(void)
 
     ImGui::Text("Environment");
     ImGui::Dummy(ImVec2(0.0, 5.0));
-    ImGui::Checkbox("Skybox", &draw_skybox);
+    ImGui::Checkbox("Enable skybox", &draw_skybox);
+    
+    if (ImGui::BeginCombo("Skybox", skybox_combo_label))
+    {
+      for (int n = 0; n < IM_ARRAYSIZE(skyboxes_names); n++)
+      {
+          const bool is_selected = (current_skybox_idx == n);
+          if (ImGui::Selectable(skyboxes_names[n], is_selected))
+              current_skybox_idx = n;
+
+          // Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
+          if (is_selected)
+              ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+
     ImGui::Checkbox("Cubemap", &bind_skybox_cubemap);
     ImGui::Dummy(ImVec2(0.0, 15.0));
 

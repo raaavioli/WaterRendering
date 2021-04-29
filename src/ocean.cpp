@@ -64,7 +64,7 @@ std::complex<double> h_tilde(const std::complex<double>& h0_tk, const std::compl
     return h0_tk * exp(std::complex(0.0, wkt)) + std::conj(h0_tmk) * exp(std::complex(0.0, -wkt));
 }
 
-Ocean::Ocean(int N, Skybox skybox) : N(N), Nplus1(N + 1), skybox(skybox), vertices(Nplus1 * Nplus1) {
+Ocean::Ocean(int N) : N(N), Nplus1(N + 1), vertices(Nplus1 * Nplus1) {
     std::vector<uint32_t> indices;
     indices.reserve(N * N * 6);
     for (int z = 0; z < Nplus1; z++) {
@@ -178,10 +178,9 @@ void Ocean::update(double dt) {
     this->surface_model.update_vertex_data(vertices);
 }
 
-void Ocean::draw(uint32_t shader, const Camera& camera) {
+void Ocean::draw(uint32_t shader, const Skybox& skybox, const Camera& camera) {
     GLuint shader_view_proj_loc = glGetUniformLocation(shader, "u_ViewProjection");
     GLuint model_loc = glGetUniformLocation(shader, "u_Model");
-    GLuint time_loc = glGetUniformLocation(shader, "u_Time");
     GLuint camera_pos_loc = glGetUniformLocation(shader, "u_CameraPos");
     GLuint tex0_loc = glGetUniformLocation(shader, "texture0");
     GLuint shader_cube_map_loc  = glGetUniformLocation(shader, "cube_map");
@@ -194,15 +193,13 @@ void Ocean::draw(uint32_t shader, const Camera& camera) {
     glUseProgram(shader);
     glUniformMatrix4fv(shader_view_proj_loc, 1, false, &wave_view_projection[0][0]);
     glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
-    glUniform1f(time_loc, simulation_time);
     glUniform3f(camera_pos_loc, camera_position.x, camera_position.y, camera_position.z);
     glUniform1i(tex0_loc, 0);
     glUniform1i(shader_cube_map_loc, 1);
 
 
     this->surface_model.bind();
-    this->skybox.bind_cube_map(1);
-    //desert_skybox.bind_cube_map(1);
+    skybox.bind_cube_map(1);
     for (int z = 0; z < num_tiles; z++) {
       for (int x = 0; x < num_tiles; x++) {
         glm::mat4 water_matrix = glm::translate(glm::mat4(1.0), 
@@ -212,8 +209,7 @@ void Ocean::draw(uint32_t shader, const Camera& camera) {
         this->surface_model.draw();
       }
     }
-
-    this->skybox.unbind_cube_map();
+    skybox.unbind_cube_map();
 }
 
 void Ocean::update_vertices() {

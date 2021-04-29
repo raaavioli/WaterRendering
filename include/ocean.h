@@ -22,11 +22,11 @@ std::complex<double> h0_tilde(const glm::vec2& K);
 std::complex<double> h_tilde(const std::complex<double>& h0_tk, const std::complex<double>& h0_tmk, const glm::vec2& K, double t);
 
 struct Ocean {
-    Ocean(int N, Skybox skybox);
+    Ocean(int N);
     ~Ocean();
 
     void update(double dt);
-    void draw(uint32_t shader, const Camera& camera);
+    void draw(uint32_t shader, const Skybox& skybox, const Camera& camera);
 
     static constexpr double g = 9.82;
 
@@ -45,7 +45,6 @@ private:
     float simulation_speed = 2.0;
 
     RawModel surface_model;
-    Skybox skybox;
 
     std::vector<Vertex> vertices;
 
