@@ -250,8 +250,6 @@ int main(void)
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-  // Wire frame
-  //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 
   // Skybox Shader Uniforms
   GLuint skybox_view_proj_loc = glGetUniformLocation(skybox_shader_program, "u_ViewProjection");
@@ -270,18 +268,25 @@ int main(void)
 
   bool draw_skybox = true;
   bool bind_skybox_cubemap = true;
+  bool wire_frame = false;
 
   int n = 0;
   std::vector<double> times(100);
+  std::vector<double> fps(100);
   while (!window.should_close ()) {
     glClearColor(0.8, 0.85, 1.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
+    if (wire_frame)
+      glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+    else
+      glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
 
     double dt = clock.tick();
     update(window, dt, camera);
     double start = clock.since_start();
     ocean.update(dt);
     times[n % 100] = (clock.since_start() - start) * 1000;
+    fps[n % 100] = dt;
     n++;
 
     ocean.draw(water_shader_program, skyboxes[current_skybox_idx], camera);
@@ -295,26 +300,32 @@ int main(void)
     }
     /** SKYBOX RENDERING END **/
 
-    double sum = 0.0;
-    for (double t : times)
-      sum += t;
+    double update_sum = 0.0;
+    double fps_sum = 0.0;
+    for (int i = 0; i < 100; i++) {
+      update_sum += times[i];
+      fps_sum += fps[i];
+    }
+    update_sum /= 100;
+    fps_sum /= 100;
+      
 
     /** GUI RENDERING BEGIN **/
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     ImGui::Begin("Settings panel");
-    ImGui::Text("FPS: %f", (1 / dt));
-    ImGui::Text("Update-time: %f (ms)", (sum / 100.0));
+    ImGui::Text("FPS: %f", (1 / fps_sum));
+    ImGui::Text("Update-time: %f (ms)", (update_sum));
     ImGui::Text("Simulation");
     ImGui::Dummy(ImVec2(0.0, 5.0));
     //ImGui::SliderFloat("Simulation speed", &simulation_speed, 0.0, 10.0);
     //ImGui::SliderInt("Num tiles", &num_tiles, 1, 20);
+    ImGui::Checkbox("Wireframe", &wire_frame);
     ImGui::Dummy(ImVec2(0.0, 15.0));
 
     ImGui::Text("Wave");
     ImGui::Dummy(ImVec2(0.0, 5.0));
-
     ImGui::Dummy(ImVec2(0.0, 15.0));
 
     ImGui::Text("Environment");
