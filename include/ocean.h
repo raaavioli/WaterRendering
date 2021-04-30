@@ -13,45 +13,55 @@
 #define CUFFT_ASSERT(err) if(err != CUFFT_SUCCESS) std::cout << "Cufft Error: " << err << ", Line: " << __LINE__ << std::endl;
 
 #include <glm/glm.hpp>
+
 #include "model.h"
 #include "camera.h"
 
-double phillips(const glm::vec2& K);
-double dispersion(const glm::vec2& K);
-std::complex<double> h0_tilde(const glm::vec2& K);
-std::complex<double> h_tilde(const std::complex<double>& h0_tk, const std::complex<double>& h0_tmk, const glm::vec2& K, double t);
+struct OceanSettings {
+    int N = 256;
+    float length = N * 0.75;
+    float amplitude = 5.f;
+    float wind_speed = 32.f;
+    glm::vec2 wind_dir = glm::vec2(1.0, 0.0);
+};
 
 struct Ocean {
-    Ocean(int N);
+    Ocean(OceanSettings settings);
     ~Ocean();
 
     void update(double dt);
     void draw(uint32_t shader, const Skybox& skybox, const Camera& camera);
+    void reload_settings(OceanSettings new_settings);
 
     static constexpr double g = 9.82;
 
-private:
-    void update_vertices();
+public:
+    // Real-time parameters
+    int num_tiles = 10;
+    float vertex_distance = 5.0;
+    float simulation_speed = 2.0;
+    float normal_roughness = 5.0;
 
 private:
-    int N;
-    int Nplus1;
-    float tile_dim = 5.0;
+    void update_vertices();
+    double phillips(const glm::vec2& K);
+    double dispersion(const glm::vec2& K);
+    std::complex<double> h0_tilde(const glm::vec2& K);
+    std::complex<double> h_tilde(const std::complex<double>& h0_tk, 
+        const std::complex<double>& h0_tmk, const glm::vec2& K, double t);
+
+private:
+    const double two_pi = glm::two_pi<double>();
     double simulation_time = 0.0;
-    double length = 300;
-    double two_pi = glm::two_pi<double>();
-    
-    int num_tiles = 10;
-    float simulation_speed = 2.0;
+    OceanSettings settings;
 
     RawModel surface_model;
 
     std::vector<Vertex> vertices;
 
-    // Memory
-
+    /* Memory */
     // Base allocation for host data
-    std::complex<double>* allocation_host;
+    std::complex<double>* allocation_host = nullptr;
 
     // Pointers into allocation_host
     std::complex<double>* h0_tk; // h0_tilde(k)
@@ -63,7 +73,7 @@ private:
     std::complex<double>* gradient_z; // z-gradient of h(k, x, t)
 
     // Base allocation for device data
-    cufftDoubleComplex* allocation_device;
+    cufftDoubleComplex* allocation_device = nullptr;
 
     // Pointers into allocation_device
     cufftDoubleComplex* displacement_y_device;

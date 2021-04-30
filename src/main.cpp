@@ -20,6 +20,7 @@
 #include "model.h"
 #include "camera.h"
 #include "clock.h"
+#include "shader.h"
 
 struct Window {
 public:
@@ -80,146 +81,6 @@ private:
 void update(const Window& window, double dt, Camera& camera);
 GLuint create_shader_program(const char* vs_code, const char* fs_code);
 
-const char* texture_vs_code = R"(
-#version 410 core
-layout(location = 0) in vec2 a_Pos;
-layout(location = 1) in vec2 a_TextureData;
-
-layout(location = 0) out vec2 vs_UV;
-
-void main() {
-  gl_Position = vec4(a_Pos, 0.0, 1.0); 
-}
-)";
-
-const char* texture_fs_code = R"(
-#version 410 core
-out vec4 color;
-
-layout(location = 0) in vec2 vs_UV;
-
-uniform sampler2D texture0;
-
-void main() {
-  color = texture(texture0, vs_UV);
-}
-)";
-
-const char* skybox_vs_code = R"(
-#version 410 core
-layout(location = 0) in vec3 a_Pos;
-
-layout(location = 0) out vec3 vs_TexCoord;
-
-uniform mat4 u_ViewProjection;
-
-void main() {
-  vs_TexCoord = a_Pos;
-  vec4 proj_pos = u_ViewProjection * vec4(a_Pos, 1.0);
-  gl_Position = proj_pos.xyww;  
-}
-)";
-
-const char* skybox_fs_code = R"(
-#version 410 core
-out vec4 color;
-
-layout(location = 0) in vec3 vs_TexCoord;
-
-uniform samplerCube cube_map;
-
-void main() {
-  color = texture(cube_map, vs_TexCoord);
-}
-)";
-
-const char* water_vs_code = R"(
-#version 410 core
-layout(location = 0) in vec3 a_Pos;
-layout(location = 1) in vec3 a_Color;
-layout(location = 2) in vec3 a_Normal;
-layout(location = 3) in vec2 a_UV;
-
-layout(location = 0) out vec3 vs_Color;
-layout(location = 1) out vec3 vs_Normal;
-layout(location = 2) out vec3 vs_LightSourceDir;
-layout(location = 3) out vec3 vs_CameraDir;
-
-uniform mat4 u_ViewProjection;
-uniform mat4 u_Model;
-uniform vec3 u_CameraPos;
-
-void main()
-{
-  // Constants
-  vec3 lightPos = vec3(20.0, 30.0, -30.0);
- 
-  vs_Color = a_Color;
-
-  vs_Normal = normalize(transpose(inverse(mat3(u_Model))) * a_Normal);
-
-  vec4 m_Pos = u_Model * vec4(a_Pos, 1.0);
-  vs_LightSourceDir = normalize(lightPos - m_Pos.xyz);
-  vs_CameraDir = normalize(u_CameraPos - m_Pos.xyz);
-  gl_Position = u_ViewProjection * m_Pos; 
-}
-)";
-
-const char* water_fs_code = R"(
-#version 410 core
-out vec4 color;
-
-layout(location = 0) in vec3 vs_Color;
-layout(location = 1) in vec3 vs_Normal;
-layout(location = 2) in vec3 vs_LightSourceDir;
-layout(location = 3) in vec3 vs_CameraDir;
-
-uniform sampler2D texture0;
-uniform samplerCube cube_map;
-
-// https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel
-// Tessendorf 4.3 - Building a Shader for renderman
-// @param I Incident vector
-// @param N Normal vector
-// @param ior Index of refraction
-float reflectivity(vec3 I, vec3 N, float ior) {
-  float costhetai = abs(dot(normalize(I), normalize(N)));
-  float thetai = acos(costhetai);
-  float sinthetat = sin(thetai) / ior;
-  float thetat = asin(sinthetat);
-  if(thetai == 0.0) {
-    float reflectivity = (ior - 1)/(ior + 1);
-    return reflectivity * reflectivity;
-  } else {
-    float fs = sin(thetat - thetai) / sin(thetat + thetai);
-    float ts = tan(thetat - thetai) / tan(thetat + thetai);
-    return 0.5 * ( fs*fs + ts*ts );
-  } 
-}
-
-void main() { 
-  // Blinn-Phong illumination using half-way vector instead of reflection.
-  float refraction_index = 1.0 / 1.33;
-  vec3 refractionDir = refract(-vs_CameraDir, vs_Normal, refraction_index);
-  vec3 reflectionDir = reflect(-vs_CameraDir, vs_Normal);
-  float reflectivity = reflectivity(vs_CameraDir, vs_Normal, 1.0 / refraction_index);
-
-  // Intensities
-  vec3 i_reflect = texture(cube_map, reflectionDir).xyz; 
-  vec3 i_refract = vs_Color;
-  if (refractionDir != vec3(0.0)) // If refractionDir is 0-vector, something is wrong. 
-    i_refract = texture(cube_map, refractionDir).xyz;
-
-  vec3 halfwayDir = normalize(vs_LightSourceDir + vs_CameraDir);
-  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 20.0);
-  
-  const vec3 light_color = 0.4 * normalize(vec3(253, 251, 211));
-  
-  vec3 reflection_refraction = reflectivity * i_reflect + (1 - reflectivity) * i_refract;
-  color = vec4(reflection_refraction + light_color * specular, 1.0);
-}
-)";
-
 int main(void)
 {
   Window window(2000, 1300);
@@ -233,14 +94,14 @@ int main(void)
   ImGui_ImplOpenGL3_Init("#version 330");
   /** ImGui setup end */
 
-
-  GLuint water_shader_program = create_shader_program(water_vs_code, water_fs_code);
+  GLuint color_water_shader = create_shader_program(water_vs_code, color_water_fs_code);
+  GLuint cubemap_water_shader = create_shader_program(water_vs_code, cubemap_water_fs_code);
   GLuint skybox_shader_program = create_shader_program(skybox_vs_code, skybox_fs_code);
 
   Texture2D white_texture;
   float movement_speed = 1.0;
   float rotation_speed = 30.0;
-  Camera camera(glm::vec3(0.0, 1.0, 10.0),
+  Camera camera(glm::vec3(0.0, 1.0, 1.0),
     0.0, 0.0, 45.0f, 1260.0f / 1080.0f, 0.01, 1000.0, 
     rotation_speed, movement_speed
   );
@@ -264,11 +125,12 @@ int main(void)
   Skybox skyboxes[] = {Skybox(skyboxes_names[0], true), Skybox(skyboxes_names[1], true), Skybox(skyboxes_names[2], true)};
 
   glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
-  Ocean ocean(200);
+  OceanSettings ocean_settings;
+  Ocean ocean(ocean_settings);
 
   bool draw_skybox = true;
-  bool bind_skybox_cubemap = true;
   bool wire_frame = false;
+  bool use_skybox_shader = true;
 
   int n = 0;
   std::vector<double> times(100);
@@ -289,7 +151,10 @@ int main(void)
     fps[n % 100] = dt;
     n++;
 
-    ocean.draw(water_shader_program, skyboxes[current_skybox_idx], camera);
+    if (use_skybox_shader)
+      ocean.draw(cubemap_water_shader, skyboxes[current_skybox_idx], camera);
+    else
+      ocean.draw(color_water_shader, skyboxes[current_skybox_idx], camera);
 
     /** SKYBOX RENDERING BEGIN (done last) **/
     if (draw_skybox) {
@@ -326,10 +191,24 @@ int main(void)
 
     ImGui::Text("Wave");
     ImGui::Dummy(ImVec2(0.0, 5.0));
+    ImGui::Text("Real-time parameters");
+    ImGui::SliderInt("Tile count", &ocean.num_tiles, 1, 20);
+    ImGui::SliderFloat("Vertex Distance", &ocean.vertex_distance, 1.0, 20.0);
+    ImGui::SliderFloat("Simulation speed", &ocean.simulation_speed, 0.0, 10.0);
+    ImGui::SliderFloat("Normal roughness", &ocean.normal_roughness, 1.0, 20.0);
+    ImGui::Dummy(ImVec2(0.0, 5.0));
+    ImGui::Text("Reloadable parameters");
+    // TODO: Fix combobox with N;
+    ImGui::SliderFloat("Length", &ocean_settings.length, 0.0f, 1000.0f);
+    ImGui::SliderFloat("Amplitude", &ocean_settings.amplitude, 0.0f, 20.0f);
+    ImGui::SliderFloat("Wind speed", &ocean_settings.wind_speed, 0.0f, 200.0f);
+    if (ImGui::Button("Reload"))
+      ocean.reload_settings(ocean_settings);
     ImGui::Dummy(ImVec2(0.0, 15.0));
 
     ImGui::Text("Environment");
     ImGui::Dummy(ImVec2(0.0, 5.0));
+    ImGui::Checkbox("Skybox shader", &use_skybox_shader);
     ImGui::Checkbox("Enable skybox", &draw_skybox);
     
     if (ImGui::BeginCombo("Skybox", skybox_combo_label))
@@ -337,17 +216,11 @@ int main(void)
       for (int n = 0; n < IM_ARRAYSIZE(skyboxes_names); n++)
       {
           const bool is_selected = (current_skybox_idx == n);
-          if (ImGui::Selectable(skyboxes_names[n], is_selected))
-              current_skybox_idx = n;
-
-          // Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
-          if (is_selected)
-              ImGui::SetItemDefaultFocus();
+          if (ImGui::Selectable(skyboxes_names[n], is_selected)) current_skybox_idx = n;
+          if (is_selected) ImGui::SetItemDefaultFocus();
       }
       ImGui::EndCombo();
     }
-
-    ImGui::Checkbox("Cubemap", &bind_skybox_cubemap);
     ImGui::Dummy(ImVec2(0.0, 15.0));
 
     ImGui::Text("Camera");

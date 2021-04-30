@@ -8,6 +8,12 @@
 
 #include "texture.h"
 
+/**
+ * TODO: Fix memory leaks, come up with solution to clean up
+ *  Who is responsible for cleaning up/deleting the glBuffers?
+ */
+
+
 struct Vertex {
   glm::vec3 position;
   glm::vec3 color;
