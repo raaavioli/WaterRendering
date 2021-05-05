@@ -23,15 +23,15 @@ Ocean::Ocean(OceanSettings settings) : settings(settings) {
             vertices[i0] = vertex;
 
             if (x < N && z < N) {
-            int i1 = (z + 1) * Nplus1 + x;
-            int i2 = (z + 1) * Nplus1 + (x + 1);
-            int i3 = z * Nplus1 + (x + 1);
-            indices.push_back(i3);
-            indices.push_back(i0);
-            indices.push_back(i1);
-            indices.push_back(i1);
-            indices.push_back(i2);
-            indices.push_back(i3);
+                int i1 = (z + 1) * Nplus1 + x;
+                int i2 = (z + 1) * Nplus1 + (x + 1);
+                int i3 = z * Nplus1 + (x + 1);
+                indices.push_back(i3);
+                indices.push_back(i0);
+                indices.push_back(i1);
+                indices.push_back(i1);
+                indices.push_back(i2);
+                indices.push_back(i3);
             }
         }
     }
@@ -172,6 +172,27 @@ void Ocean::reload_settings(OceanSettings new_settings) {
     gradient_z_device = allocation_device + 4 * N * N;
 
     CUFFT_ASSERT(cufftPlan2d(&plan, N, N, CUFFT_Z2Z));
+
+    std::vector<uint32_t> indices;
+    indices.reserve(N * N * 6);
+    int Nplus1 = N + 1;
+    for (int z = 0; z < Nplus1; z++) {
+        for (int x = 0; x < Nplus1; x++) {
+            if (x < N && z < N) {
+                int i0 = z * Nplus1 + x;
+                int i1 = (z + 1) * Nplus1 + x;
+                int i2 = (z + 1) * Nplus1 + (x + 1);
+                int i3 = z * Nplus1 + (x + 1);
+                indices.push_back(i3);
+                indices.push_back(i0);
+                indices.push_back(i1);
+                indices.push_back(i1);
+                indices.push_back(i2);
+                indices.push_back(i3);
+            }
+        }
+    }
+    this->surface_model.update_index_data(indices);
 }
 
 void Ocean::update_vertices() {

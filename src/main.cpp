@@ -1,5 +1,6 @@
 #include<iostream>
 #include<vector>
+#include<string>
 
 // External
 #include "imgui.h"
@@ -111,7 +112,6 @@ int main(void)
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-
   // Skybox Shader Uniforms
   GLuint skybox_view_proj_loc = glGetUniformLocation(skybox_shader_program, "u_ViewProjection");
   GLuint skybox_texture_loc = glGetUniformLocation(skybox_shader_program, "cube_map");
@@ -123,10 +123,18 @@ int main(void)
   static int current_skybox_idx = 0;
   const char* skybox_combo_label = skyboxes_names[current_skybox_idx];
   Skybox skyboxes[] = {Skybox(skyboxes_names[0], true), Skybox(skyboxes_names[1], true), Skybox(skyboxes_names[2], true)};
-
   glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
   OceanSettings ocean_settings;
   Ocean ocean(ocean_settings);
+
+  int dim_indices = log2(ocean_settings.N);
+  std::vector<std::string> dimensions;
+  for (int i = dim_indices; i >= 4; i--) {
+    int N = (1 << i);
+    dimensions.push_back(std::to_string(N));
+  }
+  static size_t current_dimension_idx = 0;
+
 
   bool draw_skybox = true;
   bool wire_frame = false;
@@ -198,7 +206,22 @@ int main(void)
     ImGui::SliderFloat("Normal roughness", &ocean.normal_roughness, 1.0, 20.0);
     ImGui::Dummy(ImVec2(0.0, 5.0));
     ImGui::Text("Reloadable parameters");
-    // TODO: Fix combobox with N;
+    
+    if (ImGui::BeginCombo("N", dimensions.at(current_dimension_idx).c_str()))
+    {
+      for (size_t n = 0; n < dimensions.size(); n++)
+      {
+          const bool is_selected = (current_dimension_idx == n);
+          if (ImGui::Selectable(dimensions.at(n).c_str(), is_selected)) {
+            current_dimension_idx = n;
+            int N = std::stoi(dimensions.at(n));
+            ocean_settings.N = N;
+            ocean_settings.length = 0.75 * N;
+          }
+          if (is_selected) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
     ImGui::SliderFloat("Length", &ocean_settings.length, 0.0f, 1000.0f);
     ImGui::SliderFloat("Amplitude", &ocean_settings.amplitude, 0.0f, 20.0f);
     ImGui::SliderFloat("Wind speed", &ocean_settings.wind_speed, 0.0f, 200.0f);

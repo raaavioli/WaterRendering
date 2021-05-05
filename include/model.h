@@ -26,6 +26,7 @@ struct RawModel {
     RawModel(const std::vector<Vertex>& data, const std::vector<uint32_t>& indices, GLenum usage);
 
     void update_vertex_data(const std::vector<Vertex>& vertices);
+    void update_index_data(const std::vector<uint32_t>& indices);
 
     inline void bind() { glBindVertexArray(this->renderer_id); }
     inline void unbind() { glBindVertexArray(0); }

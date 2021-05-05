@@ -8,6 +8,7 @@ RawModel::RawModel(const std::vector<Vertex>& data, const std::vector<uint32_t>&
     assert((indices.size() % 3) == 0);
     int vertex_size = sizeof(Vertex);
 
+    // TODO: Potentially fix usage for vertex and index buffers so they don't have to be the same.
     glGenVertexArrays(1, &this->renderer_id);
     glBindVertexArray(this->renderer_id);
     glGenBuffers(1, &this->vbo);
@@ -15,7 +16,7 @@ RawModel::RawModel(const std::vector<Vertex>& data, const std::vector<uint32_t>&
     glBufferData(GL_ARRAY_BUFFER, data.size() * vertex_size, &data[0], usage);
     glGenBuffers(1, &this->ebo);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this->ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), &indices[0], GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), &indices[0], usage);
     this->index_count = indices.size();
 
     // Bind buffers to VAO
@@ -37,6 +38,17 @@ void RawModel::update_vertex_data(const std::vector<Vertex>& vertices) {
     if (this->gl_usage == GL_DYNAMIC_DRAW || this->gl_usage == GL_STREAM_DRAW) {
         this->bind();
         glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(Vertex), &vertices[0]);
+        this->unbind();
+    } else {
+        std::cout << "ERROR (update_data): Usage of model data has to be GL_DYNAMIC_DRAW or GL_STREAM_DRAW" << std::endl;
+    }
+}
+
+void RawModel::update_index_data(const std::vector<uint32_t>& indices) {
+    if (this->gl_usage == GL_DYNAMIC_DRAW || this->gl_usage == GL_STREAM_DRAW) {
+        this->bind();
+        index_count = indices.size();
+        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, indices.size() * sizeof(uint32_t), &indices[0]);
         this->unbind();
     } else {
         std::cout << "ERROR (update_data): Usage of model data has to be GL_DYNAMIC_DRAW or GL_STREAM_DRAW" << std::endl;
