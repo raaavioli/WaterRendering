@@ -188,7 +188,7 @@ int main(void)
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     ImGui::Begin("Settings panel");
-    ImGui::Text("FPS: %f", (1 / fps_sum));
+    ImGui::Text("FPS: %f, time: %f (ms)", (1 / fps_sum), fps_sum * 1000);
     ImGui::Text("Update-time: %f (ms)", (update_sum));
     ImGui::Text("Simulation");
     ImGui::Dummy(ImVec2(0.0, 5.0));
@@ -204,6 +204,7 @@ int main(void)
     ImGui::SliderFloat("Vertex Distance", &ocean.vertex_distance, 1.0, 20.0);
     ImGui::SliderFloat("Simulation speed", &ocean.simulation_speed, 0.0, 10.0);
     ImGui::SliderFloat("Normal roughness", &ocean.normal_roughness, 1.0, 20.0);
+    ImGui::SliderFloat("Choppiness", &ocean.choppiness, -2.0, 2.0);
     ImGui::Dummy(ImVec2(0.0, 5.0));
     ImGui::Text("Reloadable parameters");
     

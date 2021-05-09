@@ -41,6 +41,7 @@ public:
     float vertex_distance = 5.0;
     float simulation_speed = 2.0;
     float normal_roughness = 5.0;
+    float choppiness = -1.0;
 
 private:
     void update_vertices();

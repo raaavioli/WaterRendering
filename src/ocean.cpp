@@ -202,13 +202,12 @@ void Ocean::update_vertices() {
         for (int x = 0; x < Nplus1; x++) {
             int i_v = z * Nplus1 + x;
             int i_d = (z % N) * N + x % N;
-            double lambda = -1.0;
 
             glm::vec3 origin_position = glm::vec3(-0.5 + x * vertex_distance / float(N), 0, -0.5 + z * vertex_distance / float(N));
             glm::vec3 displacement(
-                lambda * displacement_x[i_d].real(), 
+                choppiness * displacement_x[i_d].real(), 
                 displacement_y[i_d].real(), 
-                lambda * displacement_z[i_d].real()
+                choppiness * displacement_z[i_d].real()
             );
             vertices[i_v].position = origin_position + displacement;
         }
