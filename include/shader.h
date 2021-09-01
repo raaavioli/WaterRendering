@@ -158,7 +158,7 @@ layout(location = 3) in vec3 vs_CameraDir;
 void main() { 
   // Blinn-Phong illumination using half-way vector instead of reflection.
   vec3 halfwayDir = normalize(vs_LightSourceDir + vs_CameraDir);
-  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 20.0);
+  float specular = pow(max(dot(vs_Normal, halfwayDir), 0.0), 10.0);
   float diffuse = dot(vs_LightSourceDir, vs_Normal);
   
   const vec3 light_color = 0.4 * normalize(vec3(253, 251, 211));

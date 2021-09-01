@@ -20,8 +20,8 @@
 struct OceanSettings {
     int N = 256;
     float length = N * 0.75;
-    float amplitude = 5.f;
-    float wind_speed = 32.f;
+    float amplitude = 2.0f;
+    float wind_speed = 5.0f;
     glm::vec2 wind_dir = glm::vec2(1.0, 0.0);
 };
 
@@ -37,9 +37,9 @@ struct Ocean {
 
 public:
     // Real-time parameters
-    int num_tiles = 10;
+    int num_tiles = 1;
     float vertex_distance = 5.0;
-    float simulation_speed = 2.0;
+    float simulation_speed = 1.0;
     float normal_roughness = 5.0;
     float choppiness = -1.0;
 
@@ -55,6 +55,9 @@ private:
     const double two_pi = glm::two_pi<double>();
     double simulation_time = 0.0;
     OceanSettings settings;
+
+    double period = 4.0f; // Seconds / wave
+    double ripple_length = 30;
 
     RawModel surface_model;
 

@@ -98,6 +98,34 @@ void Ocean::update(double dt) {
       }
     }
 
+    float base_amplitude = 0.004f;
+    for (int m = 0; m < N; m++) {
+        for (int n = 0; n < N; n++) {
+            int i = m * N + n;
+            float k = two_pi / ripple_length;
+            float x = (n - N / 2.f);
+            float z = (m - N / 2.f);
+            glm::vec2 X(x, z);
+            glm::vec2 K(k);
+
+            float prop_dist = ripple_length * simulation_time / period;
+            float dist_to_prop = abs(prop_dist - glm::length(X));
+            int max_waves_in_flight = 1;
+            float max_wave_dist = ripple_length * max_waves_in_flight;
+            if (dist_to_prop < max_wave_dist / 2.0f) {
+                float t = max_wave_dist / 2.0 - dist_to_prop;
+                float amplitude = base_amplitude * sin (glm::half_pi<float>() * t);
+
+                float disp = dispersion(K) / glm::length(K);
+                float value = glm::length(X) * k + disp * -simulation_time;
+                displacement_y[i] += amplitude * (-1 + 2 * sin(value));
+                gradient_x[i] += amplitude * cos(value);
+                gradient_z[i] += amplitude * cos(value);
+            }
+        }
+    }
+    
+
     update_vertices();
     this->surface_model.update_vertex_data(vertices);
 }
@@ -118,7 +146,6 @@ void Ocean::draw(uint32_t shader, const Skybox& skybox, const Camera& camera) {
     glUniformMatrix4fv(model_loc, 1, false, &water_matrix[0][0]);
     glUniform3f(camera_pos_loc, camera_position.x, camera_position.y, camera_position.z);
     glUniform1i(shader_cube_map_loc, 0);
-
 
     this->surface_model.bind();
     skybox.bind_cube_map(0);

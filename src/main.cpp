@@ -23,6 +23,8 @@
 #include "clock.h"
 #include "shader.h"
 
+static bool simulation_pause = false;
+
 struct Window {
 public:
   Window(uint32_t width, uint32_t height) {
@@ -84,7 +86,8 @@ GLuint create_shader_program(const char* vs_code, const char* fs_code);
 
 int main(void)
 {
-  Window window(2000, 1300);
+  Window window(2560, 1440);
+  glfwSwapInterval(0); // VSYNC
   Clock clock;
 
   /** ImGui setup begin */
@@ -151,7 +154,7 @@ int main(void)
     else
       glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
 
-    double dt = clock.tick();
+    double dt = simulation_pause ? 0 : clock.tick();
     update(window, dt, camera);
     double start = clock.since_start();
     ocean.update(dt);
@@ -287,6 +290,8 @@ void update(const Window& window, double dt, Camera& camera) {
   if (window.is_key_pressed(GLFW_KEY_D)) direction |= Camera::RIGHT;
   if (window.is_key_pressed(GLFW_KEY_A)) direction |= Camera::LEFT;
   camera.move(dt, direction);
+
+  if (window.is_key_pressed(GLFW_KEY_P)) simulation_pause = !simulation_pause;
 }
 
 GLuint create_shader_program(const char* vs_code, const char* fs_code) {
