@@ -34,7 +34,7 @@ make
 Building project creates binary **WaterRendering**.
 
 ## Development
-Development process tracked on my [blog](https://oliver-eriksson.blogspot.com/).
+Development process tracked on my [blog](https://ocean-water-simulation.blogspot.com).
 
 ## References
 1. Jerry Tessendorf, "Simulating Ocean Water" Simulating Nature: Realistic and Interactive Techniques Course
